@@ -161,6 +161,24 @@ class NetRule:
     def loopback(self) -> bool:
         return _host_is_loopback(self.host)
 
+    @property
+    def explicit_private_ip(self) -> bool:
+        """True when the rule itself names a specific RFC1918/private IP literal
+        (e.g. a Docker host-gateway `172.17.0.1` or a lab simulator on the LAN
+        configured in `VELXIO_CHIP_NET_ALLOW`), never link-local or unspecified."""
+        try:
+            ip = ipaddress.ip_address(_norm_host(self.host))
+        except ValueError:
+            return False
+        return bool(
+            ip.is_private
+            and not ip.is_loopback
+            and not ip.is_link_local
+            and not ip.is_multicast
+            and not ip.is_reserved
+            and not ip.is_unspecified
+        )
+
     def describe(self) -> str:
         ports = 'any port' if self.ports is None else '/'.join(str(p) for p in self.ports)
         return f'{self.host} on {ports} ({",".join(self.schemes)})'
@@ -325,7 +343,7 @@ class NetPolicy:
         for rule in self.rules:
             if not rule.covers(scheme, port, host):
                 continue
-            if not rule.loopback and _literal_is_local(host):
+            if not rule.loopback and not rule.explicit_private_ip and _literal_is_local(host):
                 return NetDecision(
                     False, scheme, host, port, rule,
                     reason=f'{host} is a local address and {rule.host} is not a loopback entry',
@@ -361,6 +379,7 @@ class NetPolicy:
         if rule is None:                       # pragma: no cover - check() sets it
             return None
         loopback_entry = rule.loopback
+        private_ip_entry = rule.explicit_private_ip
         addrs = [ip for ip in (_addr_of(f, s) for f, _, _, _, s in _resolve(decision.host, decision.port)) if ip]
         for ip in addrs:
             if loopback_entry:
@@ -368,6 +387,8 @@ class NetPolicy:
                     continue
                 return (f'{decision.host} resolves to {ip}, but {rule.host} grants loopback only'
                         f' (a simulator on this machine, not the LAN)')
+            if private_ip_entry and str(ip) == _norm_host(rule.host):
+                continue
             if _addr_is_local(ip):
                 return (f'{decision.host} resolves to the local address {ip}, '
                         f'which {rule.host} does not grant')
@@ -412,6 +433,28 @@ class NetResult:
 FetchFn = Callable[[str, str, str, bytes, float, int], NetResult]
 
 
+_http_client: Optional['httpx.Client'] = None
+_http_client_lock = threading.Lock()
+
+
+def _client() -> 'httpx.Client':
+    """Process-wide keep-alive HTTP client.
+
+    A robot simulator chip polls at 10-100 Hz; building a new `httpx.Client`
+    per request reloads the system CA bundle on every HTTPS call and leaves
+    hundreds of closed loopback sockets in TIME_WAIT per second.
+    """
+    global _http_client
+    with _http_client_lock:
+        if _http_client is None:
+            # follow_redirects=False is a security decision, not a default: an
+            # allowed host that answers 302 to another origin would carry the
+            # request off the allowlist. trust_env=False keeps host proxy vars
+            # from rerouting local or allowlisted traffic.
+            _http_client = httpx.Client(follow_redirects=False, trust_env=False)
+        return _http_client
+
+
 def fetch_url(
     method: str,
     url: str,
@@ -429,23 +472,19 @@ def fetch_url(
         headers['Content-Type'] = content_type
     limits = httpx.Timeout(timeout, connect=CONNECT_TIMEOUT)
     try:
-        # follow_redirects=False is a security decision, not a default: an
-        # allowed host that answers 302 to another origin would carry the
-        # request off the allowlist. See the module docstring.
-        with httpx.Client(timeout=limits, follow_redirects=False) as client:
-            with client.stream(method, url, content=body, headers=headers) as resp:
-                chunks: list[bytes] = []
-                total = 0
-                truncated = False
-                for chunk in resp.iter_bytes():
-                    if total + len(chunk) > max_bytes:
-                        chunks.append(chunk[: max_bytes - total])
-                        total = max_bytes
-                        truncated = True
-                        break
-                    chunks.append(chunk)
-                    total += len(chunk)
-                return NetResult(status=resp.status_code, body=b''.join(chunks), truncated=truncated)
+        with _client().stream(method, url, content=body, headers=headers, timeout=limits) as resp:
+            chunks: list[bytes] = []
+            total = 0
+            truncated = False
+            for chunk in resp.iter_bytes():
+                if total + len(chunk) > max_bytes:
+                    chunks.append(chunk[: max_bytes - total])
+                    total = max_bytes
+                    truncated = True
+                    break
+                chunks.append(chunk)
+                total += len(chunk)
+            return NetResult(status=resp.status_code, body=b''.join(chunks), truncated=truncated)
     except httpx.HTTPError as e:
         return NetResult(error=f'{type(e).__name__}: {e}')
     except Exception as e:  # noqa: BLE001 - a chip must never crash the worker
@@ -500,6 +539,7 @@ class ChipNet:
         self._fetch: FetchFn = fetch or fetch_url
         self._lock = threading.Lock()
         self._inflight = False
+        self._unpolled = False
         self._reply: Optional[_Reply] = None
         self._last_body = b''
         self._last_status = VX_NET_EMPTY
@@ -579,12 +619,14 @@ class ChipNet:
             # from handing out a STALE reply while this request is in flight.
             self._reply = None
             self._inflight = True
+            self._unpolled = True
             self._settled.clear()
         try:
             _pool().submit(self._run, method, url, content_type, body, decision)
         except Exception as e:  # noqa: BLE001 - an executor that refuses
             with self._lock:
                 self._inflight = False
+                self._unpolled = False
             self._note(VX_NET_FAILED)
             self._say_once(f'could not start the request: {e!r}')
             return VX_NET_FAILED
@@ -602,11 +644,14 @@ class ChipNet:
             reply = self._reply
             if reply is not None:
                 self._reply = None
+                self._unpolled = False
+                self._last_status = reply.status
                 self._last_body = reply.body
                 self._last_len = len(reply.body)
                 return len(reply.body), reply.status, reply.body
             if self._inflight:
                 return VX_NET_BUSY, self._last_status, b''
+            self._unpolled = False
             return VX_NET_EMPTY, self._last_status, b''
 
     def step(
@@ -625,7 +670,9 @@ class ChipNet:
         `vx_net_step` in velxio-chip.h.
         """
         with self._lock:
-            already = self._inflight
+            # Do not overwrite an uncollected outcome from a previous zero-wait
+            # `step`: the second call is how the chip collects that reply.
+            already = self._inflight or self._unpolled or self._reply is not None
         if not already:
             started = self.request(method, url, content_type, body)
             if started < 0:
@@ -649,6 +696,7 @@ class ChipNet:
     def close(self) -> None:
         with self._lock:
             self._closed = True
+            self._unpolled = False
             self._reply = None
             self._last_body = b''
             # Releases a `step` waiting for a reply that will never land.

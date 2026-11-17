@@ -311,6 +311,42 @@ def test_step_returns_the_reply_when_it_lands_inside_the_wait():
     assert (code, status, body) == (2, 201, b'ok')
 
 
+def test_step_zero_wait_collects_reply_on_the_next_call_instead_of_dropping_it():
+    """The net-bridge.c idiom: `vx_net_step(..., wait_ms=0)` dispatches on the
+    first tick and returns BUSY; once the worker thread publishes the reply,
+    the next `vx_net_step(..., wait_ms=0)` call must hand back that reply
+    rather than starting a new request and wiping `_reply`."""
+    release = threading.Event()
+    calls = {'n': 0}
+
+    def fetch(*_a, **_k):
+        calls['n'] += 1
+        release.wait(2)
+        return NetResult(status=200, body=f'reply-{calls["n"]}'.encode())
+
+    net = ChipNet(_policy(), fetch=fetch)
+    assert net.step('GET', 'https://sim.test/x', '', b'', wait_ms=0)[0] == VX_NET_BUSY
+    release.set()
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline and net.busy():
+        time.sleep(0.005)
+    # The request settled between ticks; the next zero-wait step collects it.
+    code, status, body = net.step('GET', 'https://sim.test/x', '', b'', wait_ms=0)
+    assert (code, status, body) == (7, 200, b'reply-1')
+    assert calls['n'] == 1
+
+
+def test_an_explicit_private_ip_rule_grants_that_ip_only():
+    policy = NetPolicy(parse_allow_spec('172.17.0.1:3000=http'))
+    decision = policy.check('http://172.17.0.1:3000/pose')
+    assert decision.allowed is True
+    assert policy.guard_resolved(decision) is None
+    assert policy.check('http://172.17.0.2:3000/pose').allowed is False
+    # Link-local metadata is refused even if named explicitly.
+    meta = NetPolicy(parse_allow_spec('169.254.169.254:80=http'))
+    assert meta.check('http://169.254.169.254/latest/meta-data').allowed is False
+
+
 def test_a_disabled_policy_answers_unavailable():
     net = ChipNet(NetPolicy((), enabled=False), fetch=lambda *a, **k: NetResult(status=200))
     assert net.available() is False

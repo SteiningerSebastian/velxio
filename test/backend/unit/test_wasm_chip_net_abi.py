@@ -258,6 +258,28 @@ def test_resp_read_past_the_end_copies_nothing():
 def test_a_null_url_is_badarg_not_a_crash():
     h = Host()
     assert h.call('net_request_get', 0, 0, 0) == -4        # VX_NET_BADARG
+    assert h.call('net_status') == -4
+
+
+def test_step_zero_wait_collects_on_second_call_through_abi():
+    release = threading.Event()
+
+    def fetch(*_a, **_k):
+        release.wait(2)
+        return NetResult(status=200, body=b'{"ready":1}')
+
+    h = Host(fetch=fetch)
+    uri = h.write_str(URL_ADDR, 'https://sim.test/x')
+    assert h.call('net_step_get', uri, 0, 0, 0) == -1      # VX_NET_BUSY
+    release.set()
+    h.settle()
+    assert h.call('net_step_get', uri, 0, 0, 0) == 11
+    n = h.call('net_resp_read', 0, REPLY_ADDR, 64)
+    assert h.read(REPLY_ADDR, n) == b'{"ready":1}'
+    # A NULL destination pointer copies nothing and never clobbers address 0.
+    h.write_memory(0, b'keep')
+    assert h.call('net_resp_read', 0, 0, 4) == 0
+    assert h.read(0, 4) == b'keep'
 
 
 def test_an_empty_body_length_does_not_read_the_guest():

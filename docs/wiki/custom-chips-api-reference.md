@@ -804,7 +804,7 @@ void chip_setup(void) {
   vx_pin_register("SDA", VX_INPUT);
   online = vx_net_available() != 0;
   if (!online) vx_log("no egress on this host; modelling the arm locally");
-  vx_timer_create(tick, NULL);
+  vx_timer t = vx_timer_create(tick, NULL);
   vx_timer_start(t, 1000000u, true);        /* 1 ms of simulated time */
 }
 ```
@@ -887,7 +887,7 @@ cadence does the retrying, the guest never waits):
 
 ```c
 static char reply[512];
-static uint32_t next_ns;
+static uint64_t next_ns;
 
 static void tick(void* _) {
   uint64_t now = vx_sim_now_nanos();
@@ -900,6 +900,8 @@ static void tick(void* _) {
     reply[got > 0 ? got : 0] = '\0';
     apply_pose(reply);              /* JSON, CSV, whatever your server speaks */
     next_ns = now + 1000000ull;     /* once per millisecond of simulated time */
+  } else if (n != VX_NET_BUSY) {
+    next_ns = now + 1000000ull;     /* failed or refused; wait before retrying */
   }
 }
 ```
@@ -917,8 +919,13 @@ void ask(void) {
 
 void collect(void) {
   int32_t n = vx_net_poll();
-  if (n == VX_NET_BUSY || n == VX_NET_EMPTY) return;
-  if (n < 0) { vx_log("the server refused or failed"); return; }
+  if (n == VX_NET_BUSY) return;
+  if (n < 0) {
+    if (vx_net_status() < 0 && vx_net_status() != VX_NET_EMPTY) {
+      vx_log("the server refused or failed");
+    }
+    return;
+  }
   /* n bytes are in the body; vx_net_status() is the HTTP status. */
 }
 ```

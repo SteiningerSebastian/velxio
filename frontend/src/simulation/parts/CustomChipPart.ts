@@ -265,7 +265,7 @@ PartSimulationRegistry.register('custom-chip', {
       try {
         sim.registerSensor('custom-chip', virtualPin, {
           wasm_b64: wasmBase64,
-          attrs: attrsObj,
+          attrs: { ...attrsObj, ...strAttrsObj },
           pin_map: pinMap,
           pad_volts: lastPadVolts,
           nets,

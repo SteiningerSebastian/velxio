@@ -2614,6 +2614,8 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
             for lst in (_chip_pin_watch_runtimes, _chip_timer_runtimes):
                 while rt in lst:
                     lst.remove(rt)
+            if rt is not None and hasattr(rt, 'close'):
+                rt.close()
         _spi_models[:] = models
         _spi_population_changed()
         _log(f'[bus_map] {len(models)} portable SPI responder(s) hosted here')
@@ -3016,6 +3018,8 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
         rt = sensor_data.get('runtime')
         if rt is None:
             return
+        if hasattr(rt, 'close'):
+            rt.close()
         _uart_table.remove(rt)
         for lst in (_chip_spi_runtimes,
                     _chip_pin_watch_runtimes, _chip_timer_runtimes,

@@ -841,6 +841,14 @@ class WasmChipRuntime:
         self._drop_mem_view()
         self._flush_stdout()
 
+    def close(self) -> None:
+        """Release host-side resources (in-flight HTTP egress, active timers)
+        when a chip instance is detached."""
+        with self._timer_lock:
+            for t in self._timers:
+                t["active"] = False
+        self._net.close()
+
     # ── What the chip declared ───────────────────────────────────────────────
 
     @property
@@ -1036,7 +1044,7 @@ class WasmChipRuntime:
         The window is also clamped to the end of linear memory: a chip whose
         string sits in the last few bytes must read short, not fault the host.
         """
-        if ptr == 0:
+        if ptr <= 0:
             return ""
         try:
             size = self._memory.data_len(self._store)
@@ -1638,15 +1646,15 @@ class WasmChipRuntime:
                         body_ptr: int, body_len: int):
             """The arguments every request call shares, or None when a pointer
             makes the call meaningless."""
-            if method_ptr == 0 or url_ptr == 0:
+            if method_ptr <= 0 or url_ptr <= 0:
                 return None
             method = self._read_cstring(method_ptr, _NET_METHOD_MAX)
             url = self._read_cstring(url_ptr, _NET_URL_MAX)
             if not url:
                 return None
-            content_type = self._read_cstring(ctype_ptr) if ctype_ptr else ''
+            content_type = self._read_cstring(ctype_ptr) if ctype_ptr > 0 else ''
             body = b''
-            if body_ptr and body_len > 0:
+            if body_ptr > 0 and body_len > 0:
                 # A body length is the chip's word for how much of its memory
                 # it hands over; the runtime clamps it to what is actually
                 # there so a bad length cannot read past the end.
@@ -1666,6 +1674,7 @@ class WasmChipRuntime:
                            body_ptr: int, body_len: int) -> int:
             args = _net_common(method_ptr, url_ptr, ctype_ptr, body_ptr, body_len)
             if args is None:
+                self._net._note(VX_NET_BADARG)
                 return VX_NET_BADARG
             code = self._net.request(*args)
             self._flush_stdout()
@@ -1680,6 +1689,7 @@ class WasmChipRuntime:
                         body_ptr: int, body_len: int, wait_ms: int) -> int:
             args = _net_common(method_ptr, url_ptr, ctype_ptr, body_ptr, body_len)
             if args is None:
+                self._net._note(VX_NET_BADARG)
                 return VX_NET_BADARG
             code, _status, _reply = self._net.step(*args, max(0, int(wait_ms)))
             self._flush_stdout()
@@ -1690,7 +1700,7 @@ class WasmChipRuntime:
 
         def vx_net_resp_read(offset: int, dst_ptr: int, cap: int) -> int:
             body = self._net.resp_body()
-            if cap <= 0 or offset < 0 or offset >= len(body):
+            if dst_ptr <= 0 or cap <= 0 or offset < 0 or offset >= len(body):
                 return 0
             try:
                 available = self._memory.data_len(self._store) - dst_ptr

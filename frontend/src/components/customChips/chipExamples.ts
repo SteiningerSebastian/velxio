@@ -232,7 +232,9 @@ export const CHIP_EXAMPLES: ChipExample[] = [
   "license": "MIT",
   "description": "Relays a simulated device's state to an HTTP simulator beside Velxio.",
   "pins": ["DIN", "DOUT", "GND", "VCC"],
-  "attributes": []
+  "attributes": [
+    { "name": "url", "label": "Simulator URL", "type": "string", "default": "http://localhost:3000/chip/state" }
+  ]
 }
 `,
   },
