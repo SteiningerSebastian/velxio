@@ -352,6 +352,22 @@ def refuse_unmodelled_line_sensor(record: dict) -> bool:
 # and the GPIO-only behaviour is exactly what it was.
 _chip_net_bus: list = [None]
 
+# ─── Custom-chip HTTP relay (vx_net_*) ──────────────────────────────────────
+# One BrowserRelay per worker (chip_net.py): requests a chip makes to a
+# simulator on the STUDENT's machine are performed by the tab, not by this
+# process, whose localhost is the server / container. Created with the first
+# custom chip; `chip_http_response` commands from the tab resolve it.
+_http_relay: list = [None]
+
+
+def _get_http_relay(browser_relay_cls):
+    """The worker's BrowserRelay, built on first use. Its events go out
+    through _emit like every other worker event, and the backend forwards them
+    to the tab unchanged."""
+    if _http_relay[0] is None:
+        _http_relay[0] = browser_relay_cls(_emit)
+    return _http_relay[0]
+
 
 def _get_chip_net_bus(chip_net_bus_cls):
     """Lazily build the worker's ChipNetBus. A level change on a net whose
@@ -2838,7 +2854,7 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
         try:
             from app.services.wasm_chip_runtime import ChipNetBus, WasmChipRuntime
             from app.services.wasm_chip_slave   import WasmChipI2CSlave
-            from app.services.chip_net         import ChipNet
+            from app.services.chip_net         import BrowserRelay, ChipNet
         except ImportError:
             # Fallback: same pattern as esp32_i2c_slaves at the top of
             # this file. The worker subprocess may run from a cwd that
@@ -2864,6 +2880,7 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
             # chip_net is loaded by wasm_chip_runtime's own fallback when it
             # is imported by path; take it from wherever that landed.
             ChipNet = _mod_rt.ChipNet
+            BrowserRelay = sys.modules['app.services.chip_net'].BrowserRelay
         wasm_b64 = s.get('wasm_b64', '')
         if not wasm_b64:
             _log("[custom-chip] missing wasm_b64 in sensor payload")
@@ -2971,7 +2988,7 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
                     # VELXIO_CHIP_NET*), so a hundred chips cannot make the
                     # allowlist disagree with itself. The emitter is _emit so a
                     # refusal reaches the tab's chip log.
-                    net=ChipNet(emit=_emit),
+                    net=ChipNet(emit=_emit, relay=_get_http_relay(BrowserRelay)),
                 )
                 runtime.run_chip_setup()
                 _rt_cell[0] = runtime
@@ -3379,6 +3396,15 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
                     if _unlock_iothread:
                         _unlock_iothread()
 
+        elif c == 'chip_http_response':
+            # The tab finished a fetch a custom chip asked for (vx_net_*,
+            # BrowserRelay). No QEMU lock: this only wakes the vx-net pool
+            # thread waiting for it; the chip collects the reply on its own
+            # next vx_net_poll / vx_net_step, on its own thread.
+            relay = _http_relay[0]
+            if relay is not None:
+                relay.resolve(cmd)
+
         elif c == 'set_adc':
             raw_v = int(int(cmd['millivolts']) * 4095 / 3300)
             ch = int(cmd['channel'])
@@ -3679,6 +3705,8 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
 
         elif c == 'stop':
             _stopped.set()
+            if _http_relay[0] is not None:
+                _http_relay[0].close()
             # Request a clean shutdown via the QEMU main-loop thread.
             # qemu_system_shutdown_request() is safe to call from any thread:
             # it posts an event to the main loop which then tears down block

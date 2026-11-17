@@ -471,3 +471,141 @@ def test_a_closed_port_reports_failed_not_a_hang():
         time.sleep(0.01)
     assert net.busy() is False
     assert net.last_status == VX_NET_FAILED
+
+
+# ── The browser relay (requests to a simulator on the student's machine) ─────
+#
+# The worker runs on the server / in a container, so `localhost` there is not
+# the student's PC. Loopback URLs are performed by the tab instead: the relay
+# emits a `chip_http_request` event and the tab answers `chip_http_response`.
+
+
+class _FakeTab:
+    """Stands in for the browser: records events, answers on a thread."""
+
+    def __init__(self, answer=None, delay=0.0):
+        self.events: list[dict] = []
+        self.relay: chip_net.BrowserRelay | None = None
+        self._answer = answer
+        self._delay = delay
+
+    def send(self, event: dict) -> None:
+        self.events.append(event)
+        if self._answer is None:
+            return
+        def reply():
+            time.sleep(self._delay)
+            assert self.relay is not None
+            self.relay.resolve({'id': event['id'], **self._answer(event)})
+        threading.Thread(target=reply, daemon=True).start()
+
+
+def _relay_chip(policy: NetPolicy, tab: _FakeTab, server_fetch=None) -> ChipNet:
+    tab.relay = chip_net.BrowserRelay(tab.send)
+    return ChipNet(policy, timeout=1.0, relay=tab.relay,
+                   fetch=server_fetch or (lambda *a: pytest.fail('server path used')))
+
+
+def _wait_reply(net: ChipNet, timeout=2.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        code, status, body = net.poll()
+        if code != VX_NET_BUSY:
+            return code, status, body
+        time.sleep(0.01)
+    pytest.fail('no reply')
+
+
+def test_a_loopback_url_is_performed_by_the_browser():
+    import base64
+    tab = _FakeTab(answer=lambda ev: {
+        'status': 201, 'body_b64': base64.b64encode(b'{"ok":1}').decode()})
+    net = _relay_chip(shipped(), tab)
+    assert net.request('POST', 'http://localhost:3000/pose', 'application/json', b'{"j":1}') == 0
+    code, status, body = _wait_reply(net)
+    assert (code, status, body) == (8, 201, b'{"ok":1}')
+    ev = tab.events[0]
+    assert ev['type'] == 'chip_http_request'
+    assert ev['method'] == 'POST' and ev['url'] == 'http://localhost:3000/pose'
+    assert ev['content_type'] == 'application/json'
+    assert base64.b64decode(ev['body_b64']) == b'{"j":1}'
+    assert ev['timeout_ms'] == 1000
+
+
+def test_auto_route_keeps_non_loopback_urls_on_the_server(monkeypatch):
+    monkeypatch.setattr(chip_net, '_resolve', lambda h, p: [(2, 1, 6, '', ('93.184.216.34', p))])
+    tab = _FakeTab()
+    net = _relay_chip(shipped(), tab, server_fetch=lambda *a: NetResult(status=200, body=b'srv'))
+    assert net.request('GET', 'https://a.apps.htl-neufelden.at/x', '', b'') == 0
+    assert _wait_reply(net)[2] == b'srv'
+    assert tab.events == []
+
+
+def test_route_server_never_uses_the_browser():
+    tab = _FakeTab()
+    policy = NetPolicy(parse_allow_spec('localhost:*=http'), route='server')
+    net = _relay_chip(policy, tab, server_fetch=lambda *a: NetResult(status=200, body=b'srv'))
+    assert net.request('GET', 'http://localhost:3000/', '', b'') == 0
+    assert _wait_reply(net)[2] == b'srv'
+    assert tab.events == []
+
+
+def test_route_browser_sends_every_allowed_url_to_the_browser():
+    tab = _FakeTab(answer=lambda ev: {'status': 200, 'body_b64': ''})
+    policy = NetPolicy(parse_allow_spec('*.apps.htl-neufelden.at:443=https'), route='browser')
+    net = _relay_chip(policy, tab)
+    assert net.request('GET', 'https://a.apps.htl-neufelden.at/x', '', b'') == 0
+    assert _wait_reply(net)[:2] == (0, 200)
+    assert len(tab.events) == 1
+
+
+def test_the_allowlist_still_applies_before_the_browser_is_asked():
+    tab = _FakeTab()
+    net = _relay_chip(shipped(), tab)
+    assert net.request('GET', 'http://evil.example.com/', '', b'') == VX_NET_DENIED
+    assert tab.events == []
+
+
+def test_a_browser_error_reports_failed():
+    tab = _FakeTab(answer=lambda ev: {'status': 0, 'error': 'TypeError: Failed to fetch'})
+    net = _relay_chip(shipped(), tab)
+    net.request('GET', 'http://localhost:3000/', '', b'')
+    assert _wait_reply(net)[0] == VX_NET_EMPTY
+    assert net.last_status == VX_NET_FAILED
+
+
+def test_a_tab_that_never_answers_costs_one_timeout_then_failed(monkeypatch):
+    monkeypatch.setattr(chip_net.BrowserRelay, 'ROUND_TRIP_SLACK', 0.0)
+    tab = _FakeTab()   # never answers
+    tab.relay = chip_net.BrowserRelay(tab.send)
+    net = ChipNet(shipped(), timeout=0.2, relay=tab.relay)
+    net.request('GET', 'http://localhost:3000/', '', b'')
+    assert _wait_reply(net)[0] == VX_NET_EMPTY
+    assert net.last_status == VX_NET_FAILED
+    assert not net.busy()
+
+
+def test_closing_the_relay_releases_a_waiting_request():
+    tab = _FakeTab()
+    net = _relay_chip(shipped(), tab)
+    net.request('GET', 'http://localhost:3000/', '', b'')
+    time.sleep(0.05)
+    t0 = time.monotonic()
+    assert tab.relay is not None
+    tab.relay.close()
+    _wait_reply(net)
+    assert time.monotonic() - t0 < 0.5
+    assert net.last_status == VX_NET_FAILED
+
+
+def test_a_late_or_unknown_reply_is_ignored():
+    relay = chip_net.BrowserRelay(lambda ev: None)
+    assert relay.resolve({'id': 999, 'status': 200, 'body_b64': ''}) is False
+    assert relay.resolve({'id': 'x'}) is False
+
+
+def test_env_route_is_read_and_validated():
+    assert NetPolicy.from_env({}).route == 'auto'
+    assert NetPolicy.from_env({'VELXIO_CHIP_NET_ROUTE': 'server'}).route == 'server'
+    with pytest.raises(ValueError):
+        NetPolicy.from_env({'VELXIO_CHIP_NET_ROUTE': 'sideways'})

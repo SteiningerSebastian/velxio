@@ -37,10 +37,28 @@ the request goes out and every address it resolves to is checked against the
 same rule, so an allowed name cannot be pointed at a metadata endpoint or a
 private RFC1918 host. Redirects are not followed, because an allowed host
 answering `302 http://169.254.169.254/` would otherwise leave the list behind.
+
+**Who performs the request: the server, or the student's browser.** The
+worker runs wherever Velxio's backend runs — a school server, or a Docker
+container on the student's own PC. In both cases the worker's `localhost` is
+NOT the student's machine, so a robot simulator running beside the browser
+(desktop app, local exe) is unreachable from here. For those URLs the request
+is relayed: the worker emits a `chip_http_request` event, the tab that owns
+the simulation performs the `fetch()` and answers with `chip_http_response`
+(see `BrowserRelay`, and `frontend/src/simulation/customChips/chipHttpRelay.ts`).
+`VELXIO_CHIP_NET_ROUTE` picks which URLs take which path:
+
+    auto     (default) loopback rules via the browser, everything else from the server
+    browser  every allowed URL via the browser
+    server   every allowed URL from the server (the pre-relay behaviour)
+
+The allowlist is checked here for both paths, before anything leaves.
 """
 from __future__ import annotations
 
+import base64
 import ipaddress
+import itertools
 import os
 import socket
 import threading
@@ -291,12 +309,29 @@ def _default_list_text() -> str:
     return ', '.join(r.describe() for r in _default_rules)
 
 
+#: Values `VELXIO_CHIP_NET_ROUTE` accepts (module docstring).
+ROUTES = ('auto', 'browser', 'server')
+
+
 class NetPolicy:
     """The allowlist, plus the address guard that goes with it."""
 
-    def __init__(self, rules: Iterable[NetRule], *, enabled: bool = True) -> None:
+    def __init__(self, rules: Iterable[NetRule], *, enabled: bool = True,
+                 route: str = 'auto') -> None:
         self.rules: tuple[NetRule, ...] = tuple(rules)
         self.enabled = enabled
+        route = (route or 'auto').strip().lower()
+        if route not in ROUTES:
+            raise ValueError(f'VELXIO_CHIP_NET_ROUTE={route!r} is not one of {", ".join(ROUTES)}')
+        self.route = route
+
+    def via_browser(self, decision: 'NetDecision') -> bool:
+        """Should this (allowed) request be performed by the student's browser?"""
+        if self.route == 'browser':
+            return True
+        if self.route == 'server':
+            return False
+        return decision.rule is not None and decision.rule.loopback
 
     # -- construction ------------------------------------------------------
 
@@ -318,7 +353,8 @@ class NetPolicy:
             return cls((), enabled=False)
         spec = e.get('VELXIO_CHIP_NET_ALLOW')
         rules = parse_allow_spec(DEFAULT_ALLOW_SPEC if spec is None else str(spec))
-        return cls(rules, enabled=True)
+        route = str(e.get('VELXIO_CHIP_NET_ROUTE', '') or 'auto')
+        return cls(rules, enabled=True, route=route)
 
     # -- use ---------------------------------------------------------------
 
@@ -491,6 +527,104 @@ def fetch_url(
         return NetResult(error=f'{type(e).__name__}: {e}')
 
 
+class BrowserRelay:
+    """A transport that asks the tab owning this simulation to do the fetch.
+
+    One per worker process. `fetch` has the `FetchFn` shape and BLOCKS — it runs
+    on a `vx-net` pool thread, never on QEMU's IO thread, exactly like
+    `fetch_url`. It emits one `chip_http_request` event and waits for the
+    matching `chip_http_response` command, which the worker's command loop
+    (main thread) hands to `resolve`.
+
+    Event, worker → tab (forwarded verbatim over the simulation WebSocket):
+
+        {type: 'chip_http_request', id, method, url, content_type,
+         body_b64, timeout_ms, max_bytes}
+
+    Command, tab → worker (`esp32_chip_http_response` on the socket):
+
+        {cmd: 'chip_http_response', id, status, body_b64, truncated, error}
+
+    A tab that never answers (closed, or an older frontend without the relay)
+    costs the chip one timeout, then VX_NET_FAILED.
+    """
+
+    #: Slack on top of the request timeout for the WebSocket round trip; the
+    #: tab enforces the request timeout itself.
+    ROUND_TRIP_SLACK = 1.0
+
+    def __init__(self, send: Callable[[dict[str, object]], None]) -> None:
+        self._send = send
+        self._ids = itertools.count(1)
+        self._lock = threading.Lock()
+        self._pending: dict[int, tuple[threading.Event, list[NetResult]]] = {}
+        self._closed = False
+
+    def fetch(self, method: str, url: str, content_type: str, body: bytes,
+              timeout: float, max_bytes: int) -> NetResult:
+        done = threading.Event()
+        slot: list[NetResult] = []
+        with self._lock:
+            if self._closed:
+                return NetResult(error='the browser relay is closed')
+            rid = next(self._ids)
+            self._pending[rid] = (done, slot)
+        try:
+            self._send({
+                'type': 'chip_http_request',
+                'id': rid,
+                'method': method,
+                'url': url,
+                'content_type': content_type or '',
+                'body_b64': base64.b64encode(body or b'').decode('ascii'),
+                'timeout_ms': int(timeout * 1000),
+                'max_bytes': int(max_bytes),
+            })
+            if not done.wait(timeout + self.ROUND_TRIP_SLACK):
+                return NetResult(error=f'the browser did not answer within {timeout:g} s '
+                                       f'(tab closed, or a frontend without the HTTP relay)')
+            return slot[0] if slot else NetResult(error='the browser relay was closed')
+        finally:
+            with self._lock:
+                self._pending.pop(rid, None)
+
+    def resolve(self, msg: dict[str, object]) -> bool:
+        """Deliver one `chip_http_response`. False when no request waits for it
+        (it timed out already, or the id is unknown)."""
+        try:
+            rid = int(str(msg.get('id', -1)))
+        except (TypeError, ValueError):
+            return False
+        with self._lock:
+            entry = self._pending.get(rid)
+        if entry is None:
+            return False
+        done, slot = entry
+        error = str(msg.get('error') or '')
+        if error:
+            result = NetResult(error=error)
+        else:
+            try:
+                data = base64.b64decode(str(msg.get('body_b64') or ''), validate=False)
+                status = int(str(msg.get('status', 0)))
+            except (ValueError, TypeError) as e:
+                result = NetResult(error=f'malformed relay reply: {e}')
+            else:
+                result = NetResult(status=status, body=data,
+                                   truncated=bool(msg.get('truncated')))
+        slot.append(result)
+        done.set()
+        return True
+
+    def close(self) -> None:
+        """Release every waiting request (the simulation is stopping)."""
+        with self._lock:
+            self._closed = True
+            pending = list(self._pending.values())
+        for done, _slot in pending:
+            done.set()
+
+
 # ── One chip's line ───────────────────────────────────────────────────────────
 
 
@@ -531,9 +665,13 @@ class ChipNet:
         timeout: Optional[float] = None,
         max_bytes: Optional[int] = None,
         fetch: Optional[FetchFn] = None,
+        relay: Optional[BrowserRelay] = None,
     ) -> None:
         self._policy = policy if policy is not None else default_policy()
         self._emit = emit
+        #: The tab-side transport, when this host has one (the QEMU workers).
+        #: Without it every allowed request is performed from this process.
+        self._relay = relay
         self._timeout = timeout if timeout is not None else _env_float('VELXIO_CHIP_NET_TIMEOUT', DEFAULT_TIMEOUT)
         self._max_bytes = int(max_bytes if max_bytes is not None else _env_int('VELXIO_CHIP_NET_MAX_BYTES', DEFAULT_MAX_BYTES))
         self._fetch: FetchFn = fetch or fetch_url
@@ -723,9 +861,17 @@ class ChipNet:
         self._emit({'type': 'chip_log', 'text': f'[net] {reason}\n'})
 
     def _run(self, method: str, url: str, content_type: str, body: bytes, decision: NetDecision) -> None:
-        """The host thread: resolve, guard, fetch, publish."""
-        reason = ''
+        """The host thread: route, (resolve, guard,) fetch, publish."""
         try:
+            if self._relay is not None and self._policy.via_browser(decision):
+                # The browser performs it, from the student's machine. Its own
+                # resolver answers `localhost` there; what this process would
+                # resolve the name to says nothing about that, so the server-
+                # side address guard does not apply. The allowlist already did.
+                result = self._relay.fetch(method, url, content_type, body,
+                                           self._timeout, self._max_bytes)
+                self._publish(method, url, result)
+                return
             blocked = self._policy.guard_resolved(decision)
             if blocked:
                 with self._lock:
@@ -739,6 +885,11 @@ class ChipNet:
             result = self._fetch(method, url, content_type, body, self._timeout, self._max_bytes)
         except Exception as e:  # noqa: BLE001 - the chip must never crash the host
             result = NetResult(error=f'{type(e).__name__}: {e}')
+        self._publish(method, url, result)
+
+    def _publish(self, method: str, url: str, result: NetResult) -> None:
+        """Hand a finished exchange to the chip (the next `poll` takes it)."""
+        reason = ''
         with self._lock:
             self._inflight = False
             if result.error:

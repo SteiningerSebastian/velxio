@@ -768,32 +768,60 @@ storage the device owns.
 A chip that has to ask something off the canvas a question — a physics server
 holding the arm it is bolted to, a test rig reporting torque, a co-simulation
 peer — speaks HTTP through this group. It is how an **unmodified firmware**
-talks to a Docker-side simulator without a second board or a `#ifdef SIM` in
-the HAL:
+talks to a simulator without a second board or a `#ifdef SIM` in the HAL:
 
 ```
 [ESP32 firmware, unmodified]
         │  real SPI / I2C / UART / PWM
         ▼
-[custom chip .chip.c → .wasm in the QEMU worker]
-        │  vx_net_step() → HTTP(S)
-        ▼
-[Docker simulator: physics / kinematics / sensors]
+[custom chip .chip.c → .wasm in the QEMU worker (server / container)]
+        │  vx_net_step() → allowlist check
+        ├── localhost URL ──► chip_http_request ──► student's browser: fetch()
+        │                                              ▼
+        │                     [robot simulator on the student's PC]
+        └── other URL ──────► HTTP(S) from the server
+                                  ▼
+                     [school simulation server]
 ```
+
+### Who performs the request
+
+The worker runs wherever Velxio's backend runs — the school server, or a
+Docker container on the student's PC. In both cases the worker's `localhost`
+is **not** the student's machine. So a request to a loopback URL is
+**relayed**: the worker emits a `chip_http_request` event over the simulation
+WebSocket, the tab performs the `fetch()` from the student's browser, and the
+answer comes back as `esp32_chip_http_response`
+(`backend/app/services/chip_net.py` → `BrowserRelay`,
+`frontend/src/simulation/customChips/chipHttpRelay.ts`). The chip sees no
+difference: same calls, same codes. Velxio can therefore run on a remote
+server while the simulator runs on each student's PC.
+
+`VELXIO_CHIP_NET_ROUTE` decides which URLs take which path:
+
+| Value | Loopback URLs (`localhost`, `127.0.0.1`, `[::1]`) | Other allowed URLs |
+| --- | --- | --- |
+| `auto` (default) | browser | server |
+| `browser` | browser | browser |
+| `server` | server | server (the behaviour before the relay) |
+
+`server` is the right choice when Velxio and the simulator share a Docker
+network: allow the simulator's service name (`VELXIO_CHIP_NET_ALLOW`) and
+point the chip at `http://<service>:<port>`. If the tab never answers
+(closed, or a frontend without the relay), the chip gets `VX_NET_FAILED`
+after the request timeout.
 
 ### Which hosts serve it
 
 | Host | `vx_net_available()` | Behaviour |
 | --- | --- | --- |
-| QEMU worker (ESP32 / STM32 chips) | `1` | Performs the request |
+| QEMU worker (ESP32 chips) | `1` | Checks the allowlist, then relays to the browser or fetches itself (above) |
 | Browser runtime (AVR / RP2040 chips) | `0` | Answers `VX_NET_UNAVAILABLE` |
 | Linux-board host | `0` | Answers `VX_NET_UNAVAILABLE` |
 
-The browser could fetch, but a chip talks to a service on `localhost` that
-usually has no CORS story to tell, and the worker is where the peer already
-is. So only the worker performs requests; every other host still *loads* the
-binary (the imports exist, they just refuse), which is what lets one chip work
-in the editor on an Uno and in the worker on an ESP32.
+Only chips hosted by the ESP32 worker get egress. Every other host still
+*loads* the binary (the imports exist, they just refuse), which is what lets
+one chip work in the editor on an Uno and in the worker on an ESP32.
 
 Always ask once, in `chip_setup`, and model the offline case:
 
@@ -929,6 +957,66 @@ void collect(void) {
   /* n bytes are in the body; vx_net_status() is the HTTP status. */
 }
 ```
+
+### Writing the simulator (the peer)
+
+A request relayed through the browser is an ordinary cross-origin `fetch()`
+from the Velxio page to `http://localhost:<port>`. The simulator must:
+
+- **Answer CORS.** Every response carries `Access-Control-Allow-Origin: *`
+  (or the Velxio origin). Without it the browser hides the reply and the chip
+  sees `VX_NET_FAILED`; the chip log says to check CORS.
+- **Answer the preflight.** A `POST`/`PUT` with `Content-Type:
+  application/json` (anything but `text/plain`, form or multipart) makes the
+  browser send `OPTIONS` first. Reply `204` with
+  `Access-Control-Allow-Methods: GET, POST, PUT, PATCH, DELETE, OPTIONS`,
+  `Access-Control-Allow-Headers: Content-Type` and
+  `Access-Control-Allow-Private-Network: true`.
+  Tip: sending `text/plain` with a JSON body skips the preflight and halves
+  the round trips.
+- **Expect a one-time permission prompt.** When Velxio is served from a
+  public `https://` origin, Chrome/Edge ask the student once to allow access
+  to the local network for that site. Velxio on `http://localhost` does not
+  trigger it.
+- **Bind to loopback** (`127.0.0.1`) unless something else needs to reach it.
+
+Minimal Python peer (stdlib only):
+
+```python
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import json
+
+CORS = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Private-Network': 'true',
+}
+state = {'pose': [0, 0, 0]}
+
+class H(BaseHTTPRequestHandler):
+    def _send(self, code, body=b''):
+        self.send_response(code)
+        for k, v in CORS.items():
+            self.send_header(k, v)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+    def do_OPTIONS(self): self._send(204)
+    def do_GET(self):     self._send(200, json.dumps(state).encode())
+    def do_POST(self):
+        n = int(self.headers.get('Content-Length', 0))
+        state.update(json.loads(self.rfile.read(n) or b'{}'))
+        self._send(200, json.dumps(state).encode())
+
+ThreadingHTTPServer(('127.0.0.1', 3000), H).serve_forever()
+```
+
+**Rate.** A relayed request crosses worker → server → browser → simulator and
+back. Expect a few milliseconds with a local Velxio and tens of milliseconds
+with a remote one, so plan for 10–100 exchanges per second, not one per
+simulated millisecond. Batch state into one request per tick.
 
 ### Limits and caveats
 

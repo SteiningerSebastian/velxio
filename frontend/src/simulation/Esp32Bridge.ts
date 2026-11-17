@@ -20,6 +20,7 @@
  *     { type: 'esp32_sensor_update', data: { pin: number, ... } }
  *     { type: 'esp32_sensor_detach', data: { pin: number } }
  *     { type: 'esp32_chip_net',     data: { net: string, level: 0 | 1, ts: number } }
+ *     { type: 'esp32_chip_http_response', data: ChipHttpResponse }   // chipHttpRelay.ts
  *
  *   Backend → Frontend
  *     { type: 'serial_output', data: { data: string, uart?: number } }
@@ -35,6 +36,7 @@
  *     { type: 'i2c_transaction',  data: { addr: number, data: number[], owner?: string } }
  *     { type: 'spi_event',        data: { bus: number, event: number } }
  *     { type: 'chip_net',      data: { net: string, level: 0 | 1, ts: number } }
+ *     { type: 'chip_http_request', data: ChipHttpRequest }  // a custom chip's vx_net_* call
  *     { type: 'system',        data: { event: string, ... } }
  *       event 'bus_blob': { owner, name, offset, data (base64) }, a span a
  *       hosted model wrote into its named storage (the card image)
@@ -50,6 +52,7 @@ import { withHostClock } from './parts/hostClock';
 import type { LineSupport } from './line/LineHost';
 import { recordPartGap } from './line/requestLine';
 import { generateUUID } from '../utils/uuid';
+import { performChipHttpRequest, type ChipHttpRequest } from './customChips/chipHttpRelay';
 
 /**
  * Map any ESP32-family board kind to the 3 base QEMU machine types understood
@@ -561,6 +564,18 @@ export class Esp32Bridge {
             (msg.data.level as number) ? 1 : 0,
             Number(msg.data.ts ?? 0),
           );
+          break;
+        }
+        case 'chip_http_request': {
+          // A custom chip in the worker asked for a URL on this machine (a
+          // local robot simulator). The tab performs the fetch, since the
+          // worker's localhost is the server; the answer goes back to it.
+          const req = msg.data as unknown as ChipHttpRequest;
+          // A failure's reason comes back in `error`; the worker writes it to
+          // the chip log once, not once per retry.
+          void performChipHttpRequest(req).then((resp) => {
+            this._send({ type: 'esp32_chip_http_response', data: resp });
+          });
           break;
         }
         case 'chip_log':

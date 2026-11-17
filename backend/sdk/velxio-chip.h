@@ -380,6 +380,14 @@ extern uint32_t vx_blob_write(const char* name, uint32_t offset, const uint8_t* 
  * binary therefore still loads everywhere; it asks `vx_net_available()` once
  * in chip_setup and models itself without the server when the answer is 0.
  *
+ * **Who performs the request.** By default a `localhost` / `127.0.0.1` URL is
+ * fetched by the STUDENT's browser (relayed from the worker), so it reaches a
+ * simulator running on the student's own PC even when Velxio runs on a
+ * remote server or in Docker. Other allowed URLs are fetched by the server.
+ * `VELXIO_CHIP_NET_ROUTE` (auto / browser / server) changes that. A peer
+ * reached through the browser must answer CORS - see
+ * docs/wiki/custom-chips-api-reference.md, "Writing the simulator".
+ *
  * **A call never blocks the guest.** The chip runs on QEMU's IO thread, inside
  * a bus callback or a timer; a connect there would stall the guest for the
  * length of a DNS lookup, and would deadlock outright if the peer is a process

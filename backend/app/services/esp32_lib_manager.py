@@ -638,6 +638,21 @@ class EspLibManager:
                             client_id, n, getattr(inst, 'chip_net_slow_ms', 0.0))
                 inst.chip_net_slow_ms = 0.0
 
+    def chip_http_response(self, client_id: str, data: dict) -> None:
+        """Hand the worker the tab's answer to a custom chip's HTTP request
+        (the `chip_http_request` event it emitted; chip_net.BrowserRelay)."""
+        with self._instances_lock:
+            inst = self._instances.get(client_id)
+        if inst and inst.running and inst.process.returncode is None:
+            self._write_cmd(inst, {
+                'cmd': 'chip_http_response',
+                'id': data.get('id'),
+                'status': data.get('status', 0),
+                'body_b64': data.get('body_b64', ''),
+                'truncated': bool(data.get('truncated')),
+                'error': str(data.get('error') or ''),
+            })
+
     def sensor_detach(self, client_id: str, pin: int) -> None:
         """Remove a sensor from a GPIO pin."""
         with self._instances_lock:

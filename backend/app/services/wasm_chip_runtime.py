@@ -28,7 +28,9 @@ answers the same for the same call: one chip model runs beside the CPU here
 and in the tab, and the cross-host table
 (frontend/src/__tests__/board-buses/fixtures/chips-abi-parity/) is what holds
 the two to one answer. The vx_net_* group is the documented exception: only
-this host performs requests, and the browser answers VX_NET_UNAVAILABLE.
+this host offers egress (performing a request itself, or relaying it to the
+student's browser - chip_net.BrowserRelay), and the browser runtime answers
+VX_NET_UNAVAILABLE.
 """
 from __future__ import annotations
 

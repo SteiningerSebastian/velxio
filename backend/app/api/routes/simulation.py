@@ -294,6 +294,15 @@ async def simulation_websocket(websocket: WebSocket, client_id: str):
                 if net and _use_lib():
                     esp_lib_manager.chip_net(client_id, net, level, ts)
 
+            # ── ESP32 custom-chip HTTP relay (vx_net_*) ───────────────────
+            # The tab performed a fetch a worker-hosted custom chip asked for
+            # with a `chip_http_request` event (the simulator it talks to runs
+            # on the student's machine, not beside this server). Relayed to
+            # the worker, which hands it to the waiting chip.
+            elif msg_type == 'esp32_chip_http_response':
+                if _use_lib():
+                    esp_lib_manager.chip_http_response(client_id, msg_data)
+
             # ── ESP32 sensor protocol offloading (generic) ────────────────
             elif msg_type == 'esp32_sensor_attach':
                 sensor_type = msg_data.get('sensor_type', '')
