@@ -22,6 +22,7 @@ import ds3231C        from './examples/ds3231.c?raw';
 import pulseCounterC  from './examples/pulse-counter.c?raw';
 import sx1262C        from './examples/sx1262.c?raw';
 import kq130fC        from './examples/kq130f.c?raw';
+import netBridgeC     from './examples/net-bridge.c?raw';
 
 // .chip.json sources
 import inverterJ      from './examples/inverter.chip.json?raw';
@@ -214,6 +215,26 @@ export const CHIP_EXAMPLES: ChipExample[] = [
     category: 'protocol',
     sourceC: kq130fC,
     chipJson: kq130fJ,
+  },
+  {
+    id: 'net-bridge',
+    name: 'HTTP Bridge (vx_net_*)',
+    description:
+      'Asks a server outside the canvas for the state of the machine it models, ' +
+      'over HTTP from the QEMU worker. Never blocks the guest, models itself ' +
+      'offline on a host without egress. Point REMOTE_URL at your simulator.',
+    category: 'protocol',
+    sourceC: netBridgeC,
+    chipJson: `{
+  "schema": "velxio-chip/v1",
+  "name": "HTTP Bridge",
+  "author": "",
+  "license": "MIT",
+  "description": "Relays a simulated device's state to an HTTP simulator beside Velxio.",
+  "pins": ["DIN", "DOUT", "GND", "VCC"],
+  "attributes": []
+}
+`,
   },
   {
     id: 'pulse-counter',

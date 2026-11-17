@@ -20,13 +20,15 @@ Scope of this MVP:
   QEMU workers pass the guest's virtual clock; without one, host time)
 - SPI, one armed buffer per vx_spi_attach handle, behind the chip's own select
 - UART, pin watch, framebuffer
+- HTTP egress (vx_net_*), behind this host's allowlist — see chip_net.py
 
 The contract every call follows is the header's (backend/sdk/velxio-chip.h),
 and the browser runtime (frontend/src/simulation/customChips/ChipRuntime.ts)
 answers the same for the same call: one chip model runs beside the CPU here
 and in the tab, and the cross-host table
 (frontend/src/__tests__/board-buses/fixtures/chips-abi-parity/) is what holds
-the two to one answer.
+the two to one answer. The vx_net_* group is the documented exception: only
+this host performs requests, and the browser answers VX_NET_UNAVAILABLE.
 """
 from __future__ import annotations
 
@@ -43,6 +45,30 @@ import zlib
 
 import ctypes
 import wasmtime
+
+try:
+    from app.services.chip_net import (   # type: ignore[import-not-found]
+        ChipNet,
+        VX_NET_BADARG,
+    )
+except ImportError:  # pragma: no cover - the worker's by-path loader
+    # The worker subprocess may run from a cwd without `app.services` on
+    # sys.path, and then loads this file by path (esp32_worker._chip_runtime_api).
+    # chip_net sits beside it, so the same names come from there; the qualified
+    # module is registered too, so a later by-path import (wasm_chip_slave)
+    # shares this one instead of loading its own copy.
+    import importlib.util as _ilu
+    import pathlib as _pl
+    import sys as _sys
+
+    _spec_net = _ilu.spec_from_file_location(
+        'chip_net', _pl.Path(__file__).parent / 'chip_net.py')
+    _mod_net = _ilu.module_from_spec(_spec_net)
+    _sys.modules.setdefault('chip_net', _mod_net)
+    _sys.modules.setdefault('app.services.chip_net', _mod_net)
+    _spec_net.loader.exec_module(_mod_net)  # type: ignore[union-attr]
+    ChipNet = _mod_net.ChipNet
+    VX_NET_BADARG = _mod_net.VX_NET_BADARG
 
 
 class _FastCallApi:
@@ -565,6 +591,7 @@ class WasmChipRuntime:
         pin_releaser: Optional[Callable[[int], None]] = None,
         live_attrs: Optional[Callable[[str], "float | str | None"]] = None,
         share_module: bool = False,
+        net: Optional[ChipNet] = None,
     ):
         """
         Args:
@@ -631,6 +658,12 @@ class WasmChipRuntime:
                         off, each runtime compiles its own, as before. Such a
                         runtime can also run the model ahead of the bus
                         (watch_peeks, _PeekGuard).
+            net:        this chip's HTTP line (chip_net.ChipNet). Absent, the
+                        chip gets its own, bound to the process-wide policy
+                        (chip_net.default_policy) — a chip that never asks for
+                        the network pays nothing for it, since nothing runs
+                        until vx_net_request. The QEMU workers pass one in
+                        so the policy is read once per process, not per chip.
         """
         compiled = _compiled_module(wasm_bytes) if share_module else None
         self._engine = compiled.engine if compiled else wasmtime.Engine()
@@ -671,6 +704,13 @@ class WasmChipRuntime:
         self._timer_scheduler = timer_scheduler
         self._net_map = {str(k): str(v) for k, v in (net_map or {}).items()}
         self._net_bus = net_bus
+
+        # HTTP egress (vx_net_*). A chip that never calls it costs one object
+        # and one import entry; nothing runs until a request is made. See
+        # chip_net.py for the policy and velxio-chip.h for the contract. The
+        # reply body lives in the ChipNet (under its own lock), not here: one
+        # copy of a thing that can be read from two threads.
+        self._net = net if net is not None else ChipNet(emit=self._emit)
 
         # Per-instance state
         self._pins: list[dict] = []           # [{name, mode, value, gpio, net}]
@@ -988,16 +1028,29 @@ class WasmChipRuntime:
             ctypes.memmove(ctypes.addressof(view) + st.ptr + lo,
                            bytes(cache[lo:hi]), hi - lo)
 
-    def _read_cstring(self, ptr: int) -> str:
+    def _read_cstring(self, ptr: int, limit: int = 256) -> str:
+        """Read a NUL-terminated string. `limit` caps the read, so a caller with
+        a long value (a URL with a query string) asks for a bigger window than
+        the 256 bytes a pin or blob name needs.
+
+        The window is also clamped to the end of linear memory: a chip whose
+        string sits in the last few bytes must read short, not fault the host.
+        """
         if ptr == 0:
             return ""
-        # Read a chunk and find the NUL.
-        u8 = self._memory.read(self._store, ptr, ptr + 256)
         try:
-            end = u8.index(0)
+            size = self._memory.data_len(self._store)
+        except Exception:  # noqa: BLE001 - no memory yet; nothing to read
+            return ""
+        if ptr >= size:
+            return ""
+        end = min(ptr + limit, size)
+        u8 = self._memory.read(self._store, ptr, end)
+        try:
+            stop = u8.index(0)
         except ValueError:
-            end = len(u8)
-        return bytes(u8[:end]).decode("utf-8", errors="replace")
+            stop = len(u8)
+        return bytes(u8[:stop]).decode("utf-8", errors="replace")
 
     def _read_i2c_config(self, ptr: int) -> dict:
         raw = self._read_bytes(ptr, struct.calcsize(_I2C_CONFIG_FMT))
@@ -1567,6 +1620,94 @@ class WasmChipRuntime:
                     span[1] = max(span[1], offset + n)
             return n
 
+        # ── Networking (vx_net_*) ──
+        # The contract is velxio-chip.h's; the policy and the transport are
+        # chip_net.py's. Everything here runs on the thread that called in
+        # (QEMU's IO thread, or the chip-timer thread), which is the only one
+        # allowed to touch the guest's linear memory. The network work itself
+        # is on chip_net's pool; the reply body lives in the ChipNet, under its
+        # lock, and is only ever written into guest memory from here.
+        #
+        # A URL carries a query string, so it gets a read big enough for one
+        # instead of the 256 bytes a pin or blob name needs. The cap is there
+        # so a chip with a missing NUL cannot make the host walk its memory.
+        _NET_URL_MAX = 4096
+        _NET_METHOD_MAX = 16
+
+        def _net_common(method_ptr: int, url_ptr: int, ctype_ptr: int,
+                        body_ptr: int, body_len: int):
+            """The arguments every request call shares, or None when a pointer
+            makes the call meaningless."""
+            if method_ptr == 0 or url_ptr == 0:
+                return None
+            method = self._read_cstring(method_ptr, _NET_METHOD_MAX)
+            url = self._read_cstring(url_ptr, _NET_URL_MAX)
+            if not url:
+                return None
+            content_type = self._read_cstring(ctype_ptr) if ctype_ptr else ''
+            body = b''
+            if body_ptr and body_len > 0:
+                # A body length is the chip's word for how much of its memory
+                # it hands over; the runtime clamps it to what is actually
+                # there so a bad length cannot read past the end.
+                try:
+                    available = self._memory.data_len(self._store) - body_ptr
+                except Exception:  # noqa: BLE001 - no memory: nothing to send
+                    available = 0
+                n = min(int(body_len), available)
+                if n > 0:
+                    body = self._read_bytes(body_ptr, n)
+            return method, url, content_type, body
+
+        def vx_net_available() -> int:
+            return 1 if self._net.available() else 0
+
+        def vx_net_request(method_ptr: int, url_ptr: int, ctype_ptr: int,
+                           body_ptr: int, body_len: int) -> int:
+            args = _net_common(method_ptr, url_ptr, ctype_ptr, body_ptr, body_len)
+            if args is None:
+                return VX_NET_BADARG
+            code = self._net.request(*args)
+            self._flush_stdout()
+            return code
+
+        def vx_net_poll() -> int:
+            code, _status, _body = self._net.poll()
+            self._flush_stdout()
+            return code
+
+        def vx_net_step(method_ptr: int, url_ptr: int, ctype_ptr: int,
+                        body_ptr: int, body_len: int, wait_ms: int) -> int:
+            args = _net_common(method_ptr, url_ptr, ctype_ptr, body_ptr, body_len)
+            if args is None:
+                return VX_NET_BADARG
+            code, _status, _reply = self._net.step(*args, max(0, int(wait_ms)))
+            self._flush_stdout()
+            return code
+
+        def vx_net_resp_len() -> int:
+            return self._net.last_len
+
+        def vx_net_resp_read(offset: int, dst_ptr: int, cap: int) -> int:
+            body = self._net.resp_body()
+            if cap <= 0 or offset < 0 or offset >= len(body):
+                return 0
+            try:
+                available = self._memory.data_len(self._store) - dst_ptr
+            except Exception:  # noqa: BLE001 - no memory: nothing to copy into
+                return 0
+            n = min(cap, available, len(body) - offset)
+            if n <= 0:
+                return 0
+            self._write_bytes(dst_ptr, body[offset:offset + n])
+            return n
+
+        def vx_net_status() -> int:
+            return self._net.last_status
+
+        def vx_net_busy() -> int:
+            return 1 if self._net.busy() else 0
+
         # ── Logging ──
         def vx_log(msg_ptr: int) -> None:
             text = self._read_cstring(msg_ptr)
@@ -1613,6 +1754,15 @@ class WasmChipRuntime:
             "vx_blob_size":        (wasmtime.FuncType([i32], [i32]),        vx_blob_size),
             "vx_blob_read":        (wasmtime.FuncType([i32, i32, i32, i32], [i32]), vx_blob_read),
             "vx_blob_write":       (wasmtime.FuncType([i32, i32, i32, i32], [i32]), vx_blob_write),
+
+            "vx_net_available":    (wasmtime.FuncType([], [i32]),          vx_net_available),
+            "vx_net_request":      (wasmtime.FuncType([i32, i32, i32, i32, i32], [i32]), vx_net_request),
+            "vx_net_poll":         (wasmtime.FuncType([], [i32]),          vx_net_poll),
+            "vx_net_step":         (wasmtime.FuncType([i32, i32, i32, i32, i32, i32], [i32]), vx_net_step),
+            "vx_net_resp_len":     (wasmtime.FuncType([], [i32]),          vx_net_resp_len),
+            "vx_net_resp_read":    (wasmtime.FuncType([i32, i32, i32], [i32]), vx_net_resp_read),
+            "vx_net_status":       (wasmtime.FuncType([], [i32]),          vx_net_status),
+            "vx_net_busy":         (wasmtime.FuncType([], [i32]),          vx_net_busy),
 
             "vx_log":              (wasmtime.FuncType([i32], []),         vx_log),
         }

@@ -2836,6 +2836,7 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
         try:
             from app.services.wasm_chip_runtime import ChipNetBus, WasmChipRuntime
             from app.services.wasm_chip_slave   import WasmChipI2CSlave
+            from app.services.chip_net         import ChipNet
         except ImportError:
             # Fallback: same pattern as esp32_i2c_slaves at the top of
             # this file. The worker subprocess may run from a cwd that
@@ -2858,6 +2859,9 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
             sys.modules['app.services.wasm_chip_runtime'] = _mod_rt
             _spec_sl.loader.exec_module(_mod_sl)
             WasmChipI2CSlave = _mod_sl.WasmChipI2CSlave
+            # chip_net is loaded by wasm_chip_runtime's own fallback when it
+            # is imported by path; take it from wherever that landed.
+            ChipNet = _mod_rt.ChipNet
         wasm_b64 = s.get('wasm_b64', '')
         if not wasm_b64:
             _log("[custom-chip] missing wasm_b64 in sensor payload")
@@ -2960,6 +2964,12 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
                     # published by the tab beside the attrs; absent on older
                     # frontends, and then every pad reads as in the air.
                     pad_volts=s.get('pad_volts') if isinstance(s.get('pad_volts'), dict) else None,
+                    # HTTP egress (vx_net_*). One ChipNet per chip, but the
+                    # policy behind it is the process-wide one (read once from
+                    # VELXIO_CHIP_NET*), so a hundred chips cannot make the
+                    # allowlist disagree with itself. The emitter is _emit so a
+                    # refusal reaches the tab's chip log.
+                    net=ChipNet(emit=_emit),
                 )
                 runtime.run_chip_setup()
                 _rt_cell[0] = runtime

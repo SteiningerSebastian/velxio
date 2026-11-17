@@ -367,6 +367,131 @@ extern uint32_t vx_blob_read(const char* name, uint32_t offset, uint8_t* dst, ui
  *  The blob does not grow. */
 extern uint32_t vx_blob_write(const char* name, uint32_t offset, const uint8_t* src, uint32_t len);
 
+/* ─── Networking (HTTP egress from a chip) ───────────────────────────────── */
+
+/**
+ * A chip that has to ask something outside the canvas a question — a physics
+ * server holding the arm it is bolted to, a test rig reporting torque, a
+ * co-simulation peer — speaks HTTP through these calls.
+ *
+ * **Where they work.** The browser runtime and the Linux-board host implement
+ * every call here and answer `VX_NET_UNAVAILABLE`: the QEMU worker process is
+ * the host that offers egress (see backend/app/services/chip_net.py). One chip
+ * binary therefore still loads everywhere; it asks `vx_net_available()` once
+ * in chip_setup and models itself without the server when the answer is 0.
+ *
+ * **A call never blocks the guest.** The chip runs on QEMU's IO thread, inside
+ * a bus callback or a timer; a connect there would stall the guest for the
+ * length of a DNS lookup, and would deadlock outright if the peer is a process
+ * this worker has to keep serving. `vx_net_request` hands the work to a host
+ * thread and returns at once; `vx_net_poll` collects the reply, and
+ * `vx_net_step` is the shorthand that does both with an optional bounded wait.
+ * ONE request is in flight per chip instance; a second `vx_net_request` while
+ * one is still out answers `VX_NET_BUSY`.
+ *
+ * **A chip reaches only what the host granted.** Before a socket opens, the
+ * URL is matched against the deployment's allowlist (`VELXIO_CHIP_NET_ALLOW`,
+ * see chip_net.py), and the name is resolved so that an allowed hostname
+ * cannot point the request at a private or link-local address. Redirects are
+ * not followed. A refusal answers `VX_NET_DENIED` and the reason appears once
+ * in the chip log.
+ *
+ * Typical use, a model that asks its server for the joint positions once per
+ * millisecond of simulated time:
+ *
+ *   static char reply[512];
+ *   if (vx_net_busy() == 0) {
+ *     vx_net_step("GET", "http://localhost:3000/pose", NULL, NULL, 0, 0);
+ *     int32_t n = vx_net_resp_read(0, reply, sizeof(reply) - 1);
+ *     reply[n > 0 ? n : 0] = '\0';
+ *   }
+ */
+
+/* ── Result codes ──
+ * A non-negative return from any of these calls is a BYTE COUNT. A negative
+ * one is one of these reasons. */
+#define VX_NET_BUSY          (-1)  /* a request is still in flight            */
+#define VX_NET_EMPTY         (-2)  /* nothing has arrived yet                 */
+#define VX_NET_DENIED        (-3)  /* the URL is outside the host's allowlist */
+#define VX_NET_BADARG        (-4)  /* malformed URL, bad method, bad pointer  */
+#define VX_NET_FAILED        (-5)  /* DNS / connect / TLS / timeout / refusal */
+#define VX_NET_UNAVAILABLE   (-6)  /* this host offers chips no egress        */
+
+/**
+ * 1 when this host can perform requests at all, 0 otherwise. A chip that sees
+ * 0 should model its "no network" behaviour and never call the rest; the calls
+ * still answer `VX_NET_UNAVAILABLE` if it does.
+ */
+extern int32_t vx_net_available(void);
+
+/**
+ * Start one request. Returns 0 when it was dispatched, else a negative code.
+ *
+ * `method` is one of GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS (CONNECT
+ * and TRACE are refused with `VX_NET_BADARG`). `url` must be absolute and
+ * `http` or `https`. `content_type` is sent as the Content-Type header and may
+ * be NULL. `body`/`body_len` carry the request body; both may be 0.
+ *
+ * The strings are copied before this returns, so the chip may free them.
+ */
+extern int32_t vx_net_request(
+  const char* method,
+  const char* url,
+  const char* content_type,
+  const void* body,
+  uint32_t body_len
+);
+
+/**
+ * Collect the reply, if one is waiting.
+ *
+ * Answers the body length (>= 0, the reply is now readable with
+ * `vx_net_resp_read` and its HTTP status is in `vx_net_status`), or
+ * `VX_NET_BUSY` while the request is still out, or `VX_NET_EMPTY` when nothing
+ * has been started or the reply was already taken. A reply is handed out ONCE.
+ */
+extern int32_t vx_net_poll(void);
+
+/**
+ * `vx_net_request` + `vx_net_poll` with a bounded wait: dispatch unless a
+ * request is already in flight, then wait up to `wait_ms` wall-clock
+ * milliseconds for the reply. `wait_ms` 0 never waits (the poll is immediate).
+ *
+ * Returns the body length (>= 0) when the reply arrived inside the wait,
+ * `VX_NET_BUSY` when it did not (the request stays out; poll again later), or
+ * another negative code from `vx_net_request`.
+ *
+ * Waiting happens on the caller's thread, which for a chip is QEMU's IO
+ * thread: the guest stands still for as long as this waits. Keep it short
+ * (a few milliseconds) or 0, and let the simulation's own cadence do the
+ * retrying.
+ */
+extern int32_t vx_net_step(
+  const char* method,
+  const char* url,
+  const char* content_type,
+  const void* body,
+  uint32_t body_len,
+  uint32_t wait_ms
+);
+
+/** Body length of the last reply (0 when none). */
+extern int32_t vx_net_resp_len(void);
+
+/**
+ * Copy up to `cap` bytes of the last reply body, starting at `offset`.
+ * Returns the number of bytes copied (0 at or past the end). The bytes are not
+ * NUL-terminated: reserve a byte in `dst` and write it yourself.
+ */
+extern int32_t vx_net_resp_read(uint32_t offset, void* dst, uint32_t cap);
+
+/** HTTP status of the last reply (200, 404, …), or a negative `VX_NET_*`
+ *  reason when no reply has arrived. */
+extern int32_t vx_net_status(void);
+
+/** 1 while a request is in flight, 0 otherwise. */
+extern int32_t vx_net_busy(void);
+
 /* ─── Lifecycle (chip exports) ──────────────────────────────────────────── */
 
 /** Required: called once per chip instance after the simulator boots. */

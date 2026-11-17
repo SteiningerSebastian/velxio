@@ -23,6 +23,7 @@ Both are kept in sync; either works as the include path.
 - [Timers and time](#timers-and-time)
 - [Display / framebuffer](#display--framebuffer)
 - [Named blobs](#named-blobs)
+- [Networking (HTTP egress)](#networking-http-egress)
 - [Logging](#logging)
 - [Type & constant cheat sheet](#type--constant-cheat-sheet)
 - [ABI guarantees](#abi-guarantees)
@@ -759,6 +760,181 @@ injected before `chip_setup`, for a chip that boots a program (a CPU emulator
 loading its ROM). A blob is named, there can be several, and the chip writes to
 it. Reach for `vx_rom_*` for firmware you only execute, and for a blob for
 storage the device owns.
+
+---
+
+## Networking (HTTP egress)
+
+A chip that has to ask something off the canvas a question — a physics server
+holding the arm it is bolted to, a test rig reporting torque, a co-simulation
+peer — speaks HTTP through this group. It is how an **unmodified firmware**
+talks to a Docker-side simulator without a second board or a `#ifdef SIM` in
+the HAL:
+
+```
+[ESP32 firmware, unmodified]
+        │  real SPI / I2C / UART / PWM
+        ▼
+[custom chip .chip.c → .wasm in the QEMU worker]
+        │  vx_net_step() → HTTP(S)
+        ▼
+[Docker simulator: physics / kinematics / sensors]
+```
+
+### Which hosts serve it
+
+| Host | `vx_net_available()` | Behaviour |
+| --- | --- | --- |
+| QEMU worker (ESP32 / STM32 chips) | `1` | Performs the request |
+| Browser runtime (AVR / RP2040 chips) | `0` | Answers `VX_NET_UNAVAILABLE` |
+| Linux-board host | `0` | Answers `VX_NET_UNAVAILABLE` |
+
+The browser could fetch, but a chip talks to a service on `localhost` that
+usually has no CORS story to tell, and the worker is where the peer already
+is. So only the worker performs requests; every other host still *loads* the
+binary (the imports exist, they just refuse), which is what lets one chip work
+in the editor on an Uno and in the worker on an ESP32.
+
+Always ask once, in `chip_setup`, and model the offline case:
+
+```c
+static bool online;
+
+void chip_setup(void) {
+  vx_pin_register("SDA", VX_INPUT);
+  online = vx_net_available() != 0;
+  if (!online) vx_log("no egress on this host; modelling the arm locally");
+  vx_timer_create(tick, NULL);
+  vx_timer_start(t, 1000000u, true);        /* 1 ms of simulated time */
+}
+```
+
+### The allowlist
+
+A chip is a user-supplied `.wasm` running inside the backend process of every
+deployment, so the URL is checked **before** a socket opens. The list is the
+deployment's (`VELXIO_CHIP_NET_ALLOW` in `backend/.env.example`), and the
+shipped default is:
+
+```
+*.apps.htl-neufelden.at  on 443, https     (the school's simulation servers)
+localhost                on any port       (a simulator beside Velxio)
+127.0.0.1 / [::1]        on any port
+```
+
+Three rules the host applies on your behalf:
+
+- **The resolved addresses are checked too.** An allowed *name* that points
+  at RFC1918, link-local or CGNAT space is refused: an entry grants a
+  destination, not a hostname.
+- **Redirects are not followed.** An allowed host answering
+  `302 http://169.254.169.254/` would otherwise carry the request off the list.
+  Ask for the target URL directly.
+- **Only http and https.** `file:`, `ftp:` and `CONNECT` tunnels are refused
+  with `VX_NET_BADARG`.
+
+A refusal answers `VX_NET_DENIED` and the reason appears **once** in the chip
+log, so a model that retries every tick does not flood it.
+
+### The calls
+
+```c
+int32_t vx_net_available(void);
+int32_t vx_net_request(const char* method, const char* url,
+                       const char* content_type,
+                       const void* body, uint32_t body_len);
+int32_t vx_net_poll(void);
+int32_t vx_net_step(const char* method, const char* url,
+                    const char* content_type,
+                    const void* body, uint32_t body_len, uint32_t wait_ms);
+int32_t vx_net_resp_len(void);
+int32_t vx_net_resp_read(uint32_t offset, void* dst, uint32_t cap);
+int32_t vx_net_status(void);
+int32_t vx_net_busy(void);
+```
+
+A non-negative return is a **byte count**. A negative one is a reason:
+
+| Code | Meaning |
+| --- | --- |
+| `VX_NET_BUSY` (-1) | a request is still in flight |
+| `VX_NET_EMPTY` (-2) | nothing has arrived yet |
+| `VX_NET_DENIED` (-3) | the URL is outside the host's allowlist |
+| `VX_NET_BADARG` (-4) | malformed URL, method not allowed, NULL pointer |
+| `VX_NET_FAILED` (-5) | DNS / connect / TLS / timeout |
+| `VX_NET_UNAVAILABLE` (-6) | this host offers chips no egress |
+
+### Never blocking the guest
+
+The chip runs on QEMU's IO thread, inside a bus callback or a timer. A connect
+there would stall the guest for the length of a DNS lookup, and would deadlock
+outright when the peer is a process this same worker has to keep serving. So:
+
+- `vx_net_request` hands the work to a host thread and returns at once.
+- `vx_net_poll` collects it on a later call. A reply is handed out **once**;
+  `vx_net_resp_len()` / `vx_net_resp_read()` keep answering afterwards.
+- **One** request is in flight per chip; a second `vx_net_request` answers
+  `VX_NET_BUSY`. That is deliberate: a chip that queued them would have to
+  decide what a stale reply means.
+- `vx_net_step` = request + bounded wait + poll. The wait is on **your**
+  thread, so the guest stands still for exactly `wait_ms` wall-clock
+  milliseconds. Keep it at 0 unless a few ms of jitter does not matter.
+
+### The two idioms
+
+**Step per tick** (what a physics peer usually wants — the simulation's own
+cadence does the retrying, the guest never waits):
+
+```c
+static char reply[512];
+static uint32_t next_ns;
+
+static void tick(void* _) {
+  uint64_t now = vx_sim_now_nanos();
+  if (now < next_ns || vx_net_busy()) return;
+
+  int32_t n = vx_net_step("GET", "http://localhost:3000/pose",
+                          NULL, NULL, 0, 0);
+  if (n >= 0) {
+    int32_t got = vx_net_resp_read(0, reply, sizeof(reply) - 1);
+    reply[got > 0 ? got : 0] = '\0';
+    apply_pose(reply);              /* JSON, CSV, whatever your server speaks */
+    next_ns = now + 1000000ull;     /* once per millisecond of simulated time */
+  }
+}
+```
+
+**Request now, collect later** (a state machine that must not miss a tick):
+
+```c
+void chip_setup(void) { online = vx_net_available() != 0; }
+
+void ask(void) {
+  if (!online || vx_net_busy()) return;
+  vx_net_request("POST", "https://apps.htl-neufelden.at/robot/cmd",
+                 "application/json", "{\"joint\":3,\"n\":0.4}", 19);
+}
+
+void collect(void) {
+  int32_t n = vx_net_poll();
+  if (n == VX_NET_BUSY || n == VX_NET_EMPTY) return;
+  if (n < 0) { vx_log("the server refused or failed"); return; }
+  /* n bytes are in the body; vx_net_status() is the HTTP status. */
+}
+```
+
+### Limits and caveats
+
+- **Reply bodies are capped** (`VELXIO_CHIP_NET_MAX_BYTES`, 1 MiB default). A
+  longer one is **cut**, not failed: `n` is the cut length. Request a page
+  size instead of a whole table.
+- **Timeout** per request is `VELXIO_CHIP_NET_TIMEOUT` (5 s default), connect 2 s.
+- **The body is not NUL-terminated.** Reserve a byte and write it, as above.
+- **`vx_net_*` is not in the cross-host ABI table** for the same reason: the
+  hosts genuinely differ, and the table exists to forbid that everywhere else.
+  The codes and the memory contract are shared; the capability is not.
+- **No WebSocket.** The API is request/response HTTP. A protocol that needs a
+  push from the server should be polled, or the peer should expose HTTP.
 
 ---
 

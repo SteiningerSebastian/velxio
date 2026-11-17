@@ -280,6 +280,14 @@ export interface ChipInstanceOptions {
  *  no supply pad wired and no rail solved yet. */
 const CHIP_OUTPUT_VCC = 5;
 
+/**
+ * vx_net_* answer for "this host has no egress". Mirrors VX_NET_UNAVAILABLE in
+ * backend/sdk/velxio-chip.h and in the worker runtime (wasm_chip_runtime.py).
+ * A chip checks vx_net_available once in setup and models itself offline when
+ * the tab cannot serve it, instead of failing to instantiate.
+ */
+const VX_NET_UNAVAILABLE_CODE = -6;
+
 /** The pads a chip is powered from; a CMOS output swings to this level. */
 const SUPPLY_PADS = ['VCC', 'VDD'];
 
@@ -721,6 +729,24 @@ export class ChipInstance {
         this._blob_read(namePtr, offset, dstPtr, len),
       vx_blob_write: (namePtr: number, offset: number, srcPtr: number, len: number) =>
         this._blob_write(namePtr, offset, srcPtr, len),
+
+      // Networking. The tab performs no HTTP for a chip: the request API is
+      // the QEMU worker's (backend/app/services/chip_net.py), where the peer
+      // is often a local process that has no CORS story to tell. These answer
+      // VX_NET_UNAVAILABLE so one chip binary still loads here and can say
+      // why it is modelling itself offline, instead of failing at
+      // instantiation with "imports missing in host".
+      //
+      // vx_net_available is the one that answers 0, not a code: a chip tests it
+      // as a boolean, and -6 is truthy in C. The header says 1 or 0.
+      vx_net_available: () => 0,
+      vx_net_request: () => VX_NET_UNAVAILABLE_CODE,
+      vx_net_poll: () => VX_NET_UNAVAILABLE_CODE,
+      vx_net_step: () => VX_NET_UNAVAILABLE_CODE,
+      vx_net_resp_len: () => 0,
+      vx_net_resp_read: () => 0,
+      vx_net_status: () => VX_NET_UNAVAILABLE_CODE,
+      vx_net_busy: () => 0,
 
       vx_log: (msgPtr: number) => {
         const msg = readCString(this.memory!, msgPtr);

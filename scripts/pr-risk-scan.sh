@@ -31,7 +31,7 @@ ALLOW_BLOCKS=${ALLOW_BLOCKS:-0}
 
 # Hosts a diff may mention without being flagged. Anything else gets
 # reported so a reviewer looks at where new code talks to.
-URL_ALLOWLIST='velxio[.]dev|github[.]com|githubusercontent[.]com|npmjs[.](com|org)|nodejs[.]org|python[.]org|pypi[.]org|w3[.]org|xmlns|localhost|127[.]0[.]0[.]1|0[.]0[.]0[.]0|example[.](com|org)|wokwi[.]com|espressif[.]com|arduino[.]cc|micropython[.]org|raspberrypi[.]com|creativecommons[.]org|gnu[.]org|opensource[.]org|mozilla[.]org|schemas?[.]'
+URL_ALLOWLIST='velxio[.]dev|github[.]com|githubusercontent[.]com|npmjs[.](com|org)|nodejs[.]org|python[.]org|pypi[.]org|w3[.]org|xmlns|localhost|127[.]0[.]0[.]1|0[.]0[.]0[.]0|example[.](com|org)|wokwi[.]com|espressif[.]com|arduino[.]cc|micropython[.]org|raspberrypi[.]com|creativecommons[.]org|gnu[.]org|opensource[.]org|mozilla[.]org|schemas?[.]|htl-neufelden[.]at'
 
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT

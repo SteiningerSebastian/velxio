@@ -20,6 +20,13 @@ class Settings(BaseSettings):
     # and to build redirect URLs from auth routes in the overlay.
     FRONTEND_URL: str = "http://localhost:5173"
 
+    # Custom-chip HTTP egress (vx_net_*). These are read straight from the
+    # environment by app/services/chip_net.py — NetPolicy.from_env — because
+    # the QEMU worker that runs a chip is a SUBPROCESS whose env is built
+    # before this Settings object is ever imported on its side. Keeping them
+    # out of Settings means one reader, and no chance of the two disagreeing.
+    # Documented in .env.example; the defaults live in chip_net.py.
+
     # extra="ignore": tolerate legacy keys (DATA_DIR, SECRET_KEY, DATABASE_URL, …)
     # left over from pre-split .env files or from the velxio-prod overlay so the
     # OSS image starts cleanly instead of crashing with extra_forbidden.
