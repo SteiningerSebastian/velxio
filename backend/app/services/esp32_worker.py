@@ -2983,6 +2983,9 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
                     # published by the tab beside the attrs; absent on older
                     # frontends, and then every pad reads as in the air.
                     pad_volts=s.get('pad_volts') if isinstance(s.get('pad_volts'), dict) else None,
+                    # Pads an L293D-style part drives from board GPIOs
+                    # (padLogic.ts): evaluated here on the guest's own edges.
+                    pad_logic=s.get('pad_logic') if isinstance(s.get('pad_logic'), dict) else None,
                     # HTTP egress (vx_net_*). One ChipNet per chip, but the
                     # policy behind it is the process-wide one (read once from
                     # VELXIO_CHIP_NET*), so a hundred chips cannot make the
@@ -3640,6 +3643,12 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
                                 rt.update_pad_volts(new_volts)
                             except Exception as e:
                                 _log(f'[custom-chip] pad_volts update failed: {e!r}')
+                        new_logic = cmd.get('pad_logic')
+                        if rt is not None and isinstance(new_logic, dict):
+                            try:
+                                rt.update_pad_logic(new_logic)
+                            except Exception as e:
+                                _log(f'[custom-chip] pad_logic update failed: {e!r}')
 
             for _g, _p in _ir_pending:
                 with _sensors_lock:

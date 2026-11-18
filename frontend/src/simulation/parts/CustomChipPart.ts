@@ -23,6 +23,7 @@ import { requestElectricalResolve } from '../spice/electricalResolveHook';
 import { runChipAttachExtensions } from '../customChips/chipAttachExtensions';
 import { chipUartOwner } from '../customChips/ChipRuntime';
 import { padVoltsFor, samePadVolts } from '../customChips/padVolts';
+import { padLogicFor, samePadLogic, type PadLogicTable } from '../customChips/padLogic';
 import { readChipUartPads } from '../customChips/chipUartPads';
 import { setAdcVoltage, analogRailVolts } from './partUtils';
 import { attachUartEndpoint } from '../buses';
@@ -251,13 +252,21 @@ PartSimulationRegistry.register('custom-chip', {
       // are its pad names.
       const padPins: Array<[string, string]> = pins.map((name) => [name, name]);
       let lastPadVolts: Record<string, number | null> | null = padVoltsFor(componentId, padPins);
+      // Pads an L293D-style part drives from board GPIOs: the worker
+      // evaluates them on the guest's own edges (padLogic.ts), since the
+      // solve's wall-clock windows alias a software PWM.
+      const logicPins = pins.filter((name) => name && pinMap[name] === undefined);
+      let lastPadLogic: PadLogicTable | null = padLogicFor(componentId, logicPins);
       const unsubscribePadVolts = useElectricalStore.subscribe((st, prev) => {
         if (st.nodeVoltages === prev.nodeVoltages && st.pinNetMap === prev.pinNetMap) return;
+        const update: { pad_volts?: Record<string, number | null>; pad_logic?: PadLogicTable } = {};
         const volts = padVoltsFor(componentId, padPins);
-        if (samePadVolts(lastPadVolts, volts)) return;
-        lastPadVolts = volts;
+        if (!samePadVolts(lastPadVolts, volts)) update.pad_volts = lastPadVolts = volts;
+        const logic = padLogicFor(componentId, logicPins);
+        if (!samePadLogic(lastPadLogic, logic)) update.pad_logic = lastPadLogic = logic;
+        if (!update.pad_volts && !update.pad_logic) return;
         try {
-          sim.updateSensor?.(virtualPin, { pad_volts: volts });
+          sim.updateSensor?.(virtualPin, update);
         } catch {
           /* worker gone */
         }
@@ -268,6 +277,7 @@ PartSimulationRegistry.register('custom-chip', {
           attrs: { ...attrsObj, ...strAttrsObj },
           pin_map: pinMap,
           pad_volts: lastPadVolts,
+          pad_logic: lastPadLogic,
           nets,
           // The worker allocates the framebuffer vx_framebuffer_init hands the
           // chip, and needs the id to send the rows back to THIS element. It

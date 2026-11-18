@@ -590,6 +590,7 @@ class WasmChipRuntime:
         blobs: dict[str, bytes] | None = None,
         clock: Optional[Callable[[], int]] = None,
         pad_volts: dict[str, float | None] | None = None,
+        pad_logic: dict | None = None,
         pin_releaser: Optional[Callable[[int], None]] = None,
         live_attrs: Optional[Callable[[str], "float | str | None"]] = None,
         share_module: bool = False,
@@ -720,6 +721,15 @@ class WasmChipRuntime:
         # Solved voltage per chip pin name, for the pads a wire reaches.
         self._pad_volts: dict[str, float] = {}
         self.update_pad_volts(pad_volts or {})
+        # Pads driven by a logic part (an L293D output) whose inputs are board
+        # GPIOs: {pin_name: {"all": [gpio, ...], "high_v": V, "low_v": V}}.
+        # The tab derives the rule from the diagram (padLogic.ts); this host
+        # evaluates it against the live guest levels, so vx_pin_read, the
+        # analog read and the pin's watches follow every GPIO edge on the
+        # guest clock instead of the tab's wall-clock solve windows (a 20 Hz
+        # software PWM aliased against those). See update_pad_logic.
+        self._pad_logic: dict[str, dict] = {}
+        self._gpio_seen: dict[int, int] = {}
 
         # Named byte storage (vx_blob_*), per chip instance. Copied in, like the
         # browser runtime does, so the chip's writes stay inside the chip until
@@ -768,6 +778,10 @@ class WasmChipRuntime:
         # sit in both maps (a net that also carries a board GPIO); the two
         # entries keep separate last_value so neither source double-fires.
         self._net_watches: dict[int, list[dict]] = {}
+        # Watches on pads with neither a GPIO nor a chip net: they fire when
+        # the pad's logic rule (pad_logic) changes level, keyed by handle.
+        self._pad_watches: dict[int, list[dict]] = {}
+        self.update_pad_logic(pad_logic or {})
 
         # Framebuffer (vx_framebuffer_init). RGBA8888, the size chip.json declares.
         # Written by the chip from whichever thread runs its WASM (QEMU's IO thread
@@ -1295,6 +1309,9 @@ class WasmChipRuntime:
             # used to answer the pin's DIGITAL level times five (finding
             # vx-pin-read-analog-answers-neither-host-the-solve).
             if 0 <= handle < len(self._pins):
+                rule = self._pad_logic_of(self._pins[handle])
+                if rule is not None:
+                    return rule["high_v"] if self._eval_pad_logic(rule) else rule["low_v"]
                 return float(self._pad_volts.get(self._pins[handle]["name"], 0.0))
             return 0.0
 
@@ -1305,6 +1322,7 @@ class WasmChipRuntime:
                 return 0
             p = self._pins[handle]
             wired = (p["name"] in self._pad_volts
+                     or p["name"] in self._pad_logic
                      or p.get("gpio") is not None
                      or p.get("net") is not None)
             return 1 if wired else 0
@@ -1348,10 +1366,7 @@ class WasmChipRuntime:
             if not (0 <= handle < len(self._pins)):
                 return
             p = self._pins[handle]
-            if p["gpio"] is None and p["net"] is None:
-                # Chip's logical pin is on neither a real GPIO nor a chip net -
-                # no edges to detect.
-                return
+            pad_only = p["gpio"] is None and p["net"] is None
 
             # The watch starts from the level the pin reads NOW (pin_level:
             # the guest's level when reported, the pull when never driven),
@@ -1374,11 +1389,17 @@ class WasmChipRuntime:
                 self._pin_watches.setdefault(p["gpio"], []).append(_entry())
             if p["net"] is not None:
                 self._net_watches.setdefault(handle, []).append(_entry())
+            if pad_only:
+                # Neither a GPIO nor a chip net: its edges, if any, come from a
+                # pad logic rule (an L293D output fed by board GPIOs), which
+                # may arrive after chip_setup. Without a rule it never fires.
+                self._pad_watches.setdefault(handle, []).append(_entry())
 
         def vx_pin_watch_stop(handle: int) -> None:
             if not (0 <= handle < len(self._pins)):
                 return
             self._net_watches.pop(handle, None)
+            self._pad_watches.pop(handle, None)
             gpio = self._pins[handle]["gpio"]
             if gpio is None:
                 return
@@ -2042,6 +2063,57 @@ class WasmChipRuntime:
             else:
                 self._pad_volts.pop(str(name), None)
 
+    @_under_entry_lock
+    def update_pad_logic(self, rules: dict) -> None:
+        """Replace the pad logic table (see __init__). Each rule is
+        {"all": [gpio, ...], "high_v": float, "low_v": float}: the pad is high
+        (at high_v volts) while every listed GPIO is high, else low (low_v).
+        A pad absent from the table, or mapped to None, has no rule. Watches
+        on a pad whose rule changes take its current level silently: that is
+        a re-wiring, not an edge the chip should see."""
+        table: dict[str, dict] = {}
+        for name, rule in (rules or {}).items():
+            if not isinstance(rule, dict):
+                continue
+            try:
+                gpios = [int(g) for g in rule.get("all") or []]
+                high = float(rule.get("high_v", 0.0))
+                low = float(rule.get("low_v", 0.0))
+            except (TypeError, ValueError):
+                continue
+            if gpios:
+                table[str(name)] = {"all": gpios, "high_v": high, "low_v": low}
+        self._pad_logic = table
+        for handle, entries in self._pad_watches.items():
+            rule = self._pad_logic_of(self._pins[handle])
+            level = self._eval_pad_logic(rule) if rule is not None else 0
+            for entry in entries:
+                entry["last_value"] = level
+
+    def _pad_logic_of(self, p: dict) -> "dict | None":
+        # A rule only stands in for a pad with no GPIO or chip net of its own:
+        # those carry a real level already.
+        if not self._pad_logic or p["gpio"] is not None or p["net"] is not None:
+            return None
+        return self._pad_logic.get(p["name"])
+
+    def _gpio_level(self, gpio: int) -> int:
+        if self._pin_reader is not None:
+            try:
+                level = self._pin_reader(gpio)
+            except Exception:
+                level = None
+            if level is not None:
+                return int(level) & 1
+        return self._gpio_seen.get(gpio, 0)
+
+    def _eval_pad_logic(self, rule: dict, gpio: "int | None" = None, value: int = 0) -> int:
+        for g in rule["all"]:
+            level = (value & 1) if g == gpio else self._gpio_level(g)
+            if not level:
+                return 0
+        return 1
+
     # ── Named blob readback (the host ships the writes onwards) ─────────────
     @_under_entry_lock
     def blob_bytes(self, name: str) -> bytes | None:
@@ -2116,7 +2188,9 @@ class WasmChipRuntime:
         return True
 
     def has_pin_watches(self) -> bool:
-        return bool(self._pin_watches)
+        # Pad watches count: a pad logic rule turns GPIO transitions into
+        # their edges, so the worker must keep notifying this runtime.
+        return bool(self._pin_watches or self._pad_watches)
 
     def has_net_watches(self) -> bool:
         return bool(self._net_watches)
@@ -2174,15 +2248,25 @@ class WasmChipRuntime:
         # could answer for, and the edge reported here is the only place its
         # level exists.
         v = value & 1
+        self._gpio_seen[gpio] = v
         for p in self._pins:
             if p["gpio"] == gpio:
                 p["value"] = v
                 p["seen"] = True
+        fired = False
         entries = self._pin_watches.get(gpio)
-        if not entries:
-            return
-        self._fire_watches(entries, v)
-        self._flush_stdout()
+        if entries:
+            self._fire_watches(entries, v)
+            fired = True
+        if self._pad_watches and self._pad_logic:
+            for handle, pad_entries in list(self._pad_watches.items()):
+                rule = self._pad_logic_of(self._pins[handle])
+                if rule is None or gpio not in rule["all"]:
+                    continue
+                self._fire_watches(pad_entries, self._eval_pad_logic(rule, gpio, v))
+                fired = True
+        if fired:
+            self._flush_stdout()
 
     # ── UART hook (chip ← firmware) ──────────────────────────────────────────
     @_under_entry_lock
@@ -2234,6 +2318,11 @@ class WasmChipRuntime:
             if level is not None:
                 return int(level) & 1
             return p["value"] & 1
+        # A pad a logic part drives from board GPIOs (pad_logic): its level
+        # is the rule evaluated on the live guest levels.
+        rule = self._pad_logic_of(p)
+        if rule is not None:
+            return self._eval_pad_logic(rule)
         # No board GPIO: the net level is the pin level, so a chip reads
         # what another chip on the same net last drove.
         if p["net"] is not None and self._net_bus is not None:
