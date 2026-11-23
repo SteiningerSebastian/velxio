@@ -263,7 +263,20 @@
       "clear": "Cancella",
       "noChannels": "Nessun canale aggiunto.",
       "noChannelsHint": "Clicca \"+ Aggiungi canale\" per monitorare un pin.",
-      "removeChannel": "Rimuovi {{label}}"
+      "removeChannel": "Rimuovi {{label}}",
+      "probeLost": "Il punto misurato non è più nel circuito",
+      "noData": "nessun dato",
+      "hwBusNotDrawn": "{{controller}} {{signal}}: il motore di questa scheda non muove alcun pin durante un trasferimento {{bus}} hardware, quindi la traccia resta piatta anche con il bus occupato. Un bus software (bit-bang) invece si vede.",
+      "hwBusDefaultNotDrawn": "Questo pin è il {{controller}} {{signal}} predefinito della scheda. Se lo sketch lo usa per il {{bus}} hardware (Wire, SPI), i trasferimenti non vengono disegnati: il motore di questa scheda non muove alcun pin durante questi, quindi la traccia resta piatta anche con il bus occupato. Un bus software (bit-bang) invece si vede.",
+      "voltsDiv": "V/div:",
+      "vChannelTitle": "Canale analogico regolato da V/div, offset e accoppiamento",
+      "voltsDivTitle": "Volt per divisione. Auto adatta ogni acquisizione; un valore fissa la scala.",
+      "auto": "Auto",
+      "offset": "Offset:",
+      "offsetTitle": "Tensione al centro della riga. Un valore scritto qui fissa la scala.",
+      "couplingTitle": "Accoppiamento: DC mostra il segnale con la sua polarizzazione, AC toglie la media per mostrare un piccolo ripple su una polarizzazione",
+      "triggerLevel": "Livello:",
+      "triggerLevelTitle": "Tensione che il canale di trigger analogico deve attraversare. Vuoto: il centro di ogni acquisizione."
     },
     "componentProps": {
       "close": "Chiudi",

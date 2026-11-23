@@ -170,7 +170,7 @@ export const analogProjectExamples: ExampleProject[] = [
     id: 'analog-night-light',
     title: 'Night Light: LDR and Two Transistors',
     description:
-      "An automatic night light with no microcontroller. The light sensor's output rises as the light falls: its LDR sits between AO and GND under a 10 kOhm resistor, as on the real module. Transistor Q1 follows that output and feeds the base of Q2, so the pair turns on once it passes two base-emitter drops, about 1.3 V: below about 30 lux the LED lights up. The sensor carries a low-resistance LDR (rl10 6 kOhm, gamma 0.5: a GL5516) to put the switch point there; with the stock GL5528 it would light below about 120 lux. Open the sensor and drag its light level to switch it.",
+      "An automatic night light with no microcontroller. The light sensor's output rises as the light falls: its LDR sits between AO and GND under a 10 kOhm resistor, as on the real module. Transistor Q1 follows that output and feeds the base of Q2, so the pair turns on once it passes two base-emitter drops, about 1.3 V: below about 30 lux the LED lights up, and by about 40 lux it is out. Rbe, 10 kOhm from Q2's base to its emitter, keeps Q2 off until Q1 passes it enough current, which makes the switch sharp: without it the pair leaks a faint glow up to about 60 lux. The sensor carries a low-resistance LDR (rl10 6 kOhm, gamma 0.5: a GL5516) to put the switch point there; with the stock GL5528 it would light below about 120 lux. Open the sensor and drag its light level to switch it.",
     category: 'circuits',
     difficulty: 'beginner',
     boardFilter: 'analog',
@@ -194,6 +194,7 @@ export const analogProjectExamples: ExampleProject[] = [
       { type: 'wokwi-bjt-2n2222', id: 'q1', x: 140, y: 80, properties: {} },
       { type: 'wokwi-resistor', id: 'rc1', x: 200, y: 20, properties: { value: '10000' } },
       { type: 'wokwi-bjt-2n2222', id: 'q2', x: 300, y: 40, properties: {} },
+      { type: 'wokwi-resistor', id: 'rbe', x: 294, y: 140, properties: { value: '10000' } },
       { type: 'wokwi-resistor', id: 'rled', x: 300, y: -50, properties: { value: '220' } },
       { type: 'wokwi-led', id: 'led1', x: 360, y: -40, properties: { color: 'yellow' } },
     ],
@@ -226,6 +227,14 @@ export const analogProjectExamples: ExampleProject[] = [
         [34, 190],
         [34, 102],
       ]),
+      // Rbe from Q2's base to its emitter: Q2 stays off until Q1 passes it
+      // about 60 uA, so the pair switches over a few lux instead of leaking
+      // a glow into daylight (velxio/velxio-prod#226).
+      w('w13', ['rbe', '1'], ['q2', 'B'], C_SIG, [
+        [280, 152],
+        [280, 82],
+      ]),
+      w('w14', ['rbe', '2'], ['q2', 'E'], C_GND, [[366, 152]]),
       w('w11', ['rled', '2'], ['led1', 'A'], C_OUT, [[385, -44]]),
       w('w12', ['led1', 'C'], ['q2', 'C'], C_OUT, [
         [375, 20],
@@ -611,7 +620,7 @@ void loop() {
     id: 'esp32-pwm-dac-lm358-12v',
     title: 'ESP32 PWM to 0-12 V (LM358 on a 15 V Supply)',
     description:
-      "A 3.3 V microcontroller driving a 12 V signal. GPIO25's PWM goes through a 10k/10uF low-pass filter into an LM358 wired as a non-inverting amplifier with a gain of 3.7, and the op-amp runs from a 15 V bench supply on its V+ pin. The voltmeter shows the output, and a 100k/22k divider brings it back to GPIO34 so the serial monitor compares each target with what came out. Disconnect V+ and the op-amp falls back to the ESP32's 3.3 V: the output stops near 2 V whatever the gain.",
+      "A 3.3 V microcontroller driving a 12 V signal. GPIO25's PWM goes through a 10k/10uF low-pass filter into an LM358 wired as a non-inverting amplifier with a gain of 3.7, and the op-amp runs from a 15 V bench supply on its V+ pin. The voltmeter shows the output, and a 100k/22k divider brings it back to GPIO34 so the serial monitor compares each target with what came out. Disconnect V+ and the op-amp falls back to the ESP32's 3.3 V: the output stops near 2.3 V whatever the gain.",
     category: 'circuits',
     difficulty: 'intermediate',
     boardType: 'esp32',
@@ -621,7 +630,7 @@ void loop() {
 // setpoint between 0 and 3.3 V; the LM358, wired as a non-inverting amplifier
 // with a gain of 1 + 27k/10k = 3.7, lifts it to 0..12.2 V. The op-amp is
 // powered from the 15 V bench supply on its V+ pin: an op-amp cannot put out
-// more than its supply, and on the ESP32's 3.3 V an LM358 stops near 2 V.
+// more than its supply, and on the ESP32's 3.3 V an LM358 stops near 2.3 V.
 // A 100k/22k divider brings the output back under 3.3 V for GPIO34, so the
 // sketch prints what it got next to what it asked for. The ESP32's ADC sees
 // nothing under about 0.14 V (Espressif rates it from 150 mV up), so the 0 V

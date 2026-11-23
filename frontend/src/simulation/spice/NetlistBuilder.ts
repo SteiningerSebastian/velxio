@@ -19,10 +19,19 @@
  */
 import { UnionFind } from './unionFind';
 import { parseValueWithUnits } from './valueParser';
-import { componentToSpice } from './componentToSpice';
+import { componentToSpice, logicGateLinks, OPEN_CONTACT_OHMS } from './componentToSpice';
 import { auxRailNetName, isAuxRailNet } from './boardPinGroups';
 import { hasInternalNets, breadboardGroupKey } from '../../utils/breadboardNets';
-import type { BuildNetlistInput, ComponentForSpice, BoardForSpice, WireForSpice } from './types';
+import type {
+  AnalysisMode,
+  BuildNetlistInput,
+  ComponentForSpice,
+  BoardForSpice,
+  WireForSpice,
+  SwitchMemoryCell,
+  NodeMemoryCell,
+} from './types';
+import { settledStepS, startUpSeconds } from './settleTime';
 
 /** True for any self-driven supply net: ground, the main rail, or an aux rail. */
 function isRailNet(net: string): boolean {
@@ -143,10 +152,25 @@ export interface BuildNetlistResult {
    * mean voltage is what the part integrates, and the pad stays at it.
    */
   staticPads: Set<string>;
+  /**
+   * The analysis the netlist's card runs: the input's, with a transient that
+   * asked to `settle` given its start-up (`start`, TSTART), the end of the
+   * run (`stop`) and, when the deck holds a diode, a finer `step`
+   * (settledStepS). The solve must run this one, not the input's.
+   */
+  analysis: AnalysisMode;
+  /**
+   * The switches with memory in the deck (a relay's armature), with the state
+   * each one starts in (BuildNetlistInput.memory). The circuit service reads
+   * their control nodes after a solve to know where they ended.
+   */
+  memoryCells: SwitchMemoryCell[];
+  /** The latch nets the deck seeds (.nodeset), with their seeds. */
+  nodeMemoryCells: NodeMemoryCell[];
 }
 
 export function buildNetlist(input: BuildNetlistInput): BuildNetlistResult {
-  const { components, wires, boards, analysis, extraCards = [] } = input;
+  const { components, wires, boards, analysis, extraCards = [], memory } = input;
 
   // ── 1. Union-Find over wires ─────────────────────────────────────────────
   const uf = new UnionFind();
@@ -286,11 +310,23 @@ export function buildNetlist(input: BuildNetlistInput): BuildNetlistResult {
   // (a C or L card), for BuildNetlistResult.staticPads.
   const partNets: Array<{ nets: string[]; reactive: boolean }> = [];
 
+  // Logic gates on a feedback loop (an SR latch): they drive their pins
+  // through an output resistance and the deck seeds their nets (step 8), so
+  // the latch settles in a state instead of on its unstable midpoint
+  // (velxio/velxio-prod#147).
+  const latch = findLatches(components, (id, pin) => netLookup(id, pin));
+  const memoryCells: SwitchMemoryCell[] = [];
   for (const comp of components) {
     const localLookup = (pinName: string) => netLookup(comp.id, pinName);
-    const emission = componentToSpice(comp, localLookup, { vcc: dominantVcc });
+    const operated = memory?.switches?.get(comp.id);
+    const emission = componentToSpice(comp, localLookup, {
+      vcc: dominantVcc,
+      operated,
+      ...(latch.nets.size > 0 ? { latchNets: latch.nets } : {}),
+    });
     if (!emission) continue;
     cards.push(...emission.cards);
+    if (emission.memory) memoryCells.push({ id: comp.id, ...emission.memory, seed: operated === true });
     if (emission.supplies?.length) powering.push({ id: comp.id, supplies: emission.supplies, cards: emission.cards });
     emitted.push({ id: comp.id, cards: emission.cards });
     for (const m of emission.modelsUsed) modelLines.add(m);
@@ -304,7 +340,9 @@ export function buildNetlist(input: BuildNetlistInput): BuildNetlistResult {
     }
     partNets.push({
       nets: [...joined],
-      reactive: emission.cards.some((c) => /^[CL]/i.test(c)),
+      // A part whose C and L a PWM's split states describe (a DC motor's
+      // winding and shaft) leaves its pads static (SpiceEmission.pwmStatic).
+      reactive: !emission.pwmStatic && emission.cards.some((c) => /^[CL]/i.test(c)),
     });
   }
 
@@ -321,6 +359,8 @@ export function buildNetlist(input: BuildNetlistInput): BuildNetlistResult {
   // referenced VCC — we must still emit the rail source (step 6) or the
   // pull-up would hang off a dead node and the input would read LOW anyway.
   let vccRailNeeded = false;
+  // The nodes between a pin's source and its output impedance.
+  const padNodes = new Set<string>();
   for (const board of boards) {
     for (const [pinName, state] of Object.entries(board.pins)) {
       const net = netLookup(board.id, pinName);
@@ -347,10 +387,38 @@ export function buildNetlist(input: BuildNetlistInput): BuildNetlistResult {
         continue;
       }
       if (!net) continue;
-      if (isRailNet(net)) continue; // already served by a rail source
       const v = state.type === 'digital' ? state.v : state.duty * board.vcc;
-      cards.push(`V_${sanitizeSpiceId(board.id)}_${sanitizeSpiceId(pinName)} ${net} 0 DC ${v}`);
+      const source = `V_${sanitizeSpiceId(board.id)}_${sanitizeSpiceId(pinName)}`;
+      const ohms = board.pinOutputOhms ?? 0;
+      if (ohms > 0) {
+        // A real output pin: its driver behind the pin's output impedance
+        // (velxio/velxio-prod#140). The source keeps its name, so the
+        // scheduler's alters and the branch current, which is the pin's
+        // current, are unchanged; its own node sits between the two. A pin on
+        // a rail gets its driver too: driven HIGH into GND it is the short it
+        // is on hardware, which the run checks (verify/pinCurrent).
+        const pad = `pad_${sanitizeSpiceId(board.id)}_${sanitizeSpiceId(pinName)}`;
+        cards.push(`${source} ${pad} 0 DC ${v}`);
+        cards.push(`R_${sanitizeSpiceId(board.id)}_${sanitizeSpiceId(pinName)}_out ${pad} ${net} ${ohms}`);
+        padNodes.add(pad);
+        if (!isRailNet(net)) sourcedNets.add(net);
+        continue;
+      }
+      if (isRailNet(net)) continue; // already served by a rail source
+      cards.push(`${source} ${net} 0 DC ${v}`);
       sourcedNets.add(net); // board GPIO V-source drives this net (e.g. cross-board input)
+    }
+  }
+
+  // A pin that loads its net inside the chip (BoardForSpice.pinLoads): an
+  // ATmega's AREF, the 32 kOhm input of its ADC reference. Only where a wire
+  // lands on it; a rail is held by its own source.
+  for (const board of boards) {
+    for (const [pinName, ohms] of Object.entries(board.pinLoads ?? {})) {
+      const net = netLookup(board.id, pinName);
+      if (!net || isRailNet(net) || !(ohms > 0)) continue;
+      cards.push(`R_${sanitizeSpiceId(board.id)}_${sanitizeSpiceId(pinName)}_load ${net} 0 ${ohms}`);
+      sourcedNets.add(net);
     }
   }
 
@@ -467,7 +535,7 @@ export function buildNetlist(input: BuildNetlistInput): BuildNetlistResult {
   }
 
   // ── 7. Auto pull-downs for floating nets ─────────────────────────────────
-  const floating = detectFloatingNets(netNames, cards);
+  const floating = detectFloatingNets(netNames, cards, padNodes);
   for (const net of floating) {
     cards.push(`R_autopull_${net} ${net} 0 100Meg`);
   }
@@ -476,20 +544,61 @@ export function buildNetlist(input: BuildNetlistInput): BuildNetlistResult {
   const lines: string[] = [`* Velxio circuit @ ${new Date().toISOString()}`];
   lines.push(...cards);
   lines.push(...modelLines);
+  // Latch seeds: where each latch net was at the last solve, or a power-up
+  // state (the first gate of each loop low, the next high, ...).
+  const nodeMemoryCells: NodeMemoryCell[] = latch.outputs.map((o) => {
+    const remembered = memory?.nodes?.get(o.key);
+    const seed =
+      remembered !== undefined && Number.isFinite(remembered)
+        ? Math.round(remembered * 1000) / 1000
+        : o.powerUpHigh
+          ? dominantVcc
+          : 0;
+    return { key: o.key, net: o.net, threshold: dominantVcc / 2, seed };
+  });
+  if (nodeMemoryCells.length > 0) {
+    lines.push(`.nodeset ${nodeMemoryCells.map((c) => `V(${c.net})=${c.seed}`).join(' ')}`);
+  }
   lines.push(...extraCards);
 
-  switch (analysis.kind) {
+  // A transient that asked to settle runs the circuit's start-up first,
+  // computed but not stored (TSTART), sized from the deck's own cards, when
+  // the meters would read that start-up in the window (settleTime.ts).
+  let resolved: AnalysisMode = analysis;
+  if (analysis.kind === 'tran' && analysis.settle) {
+    const stepS = parseValueWithUnits(analysis.step);
+    // The start-up's budget counts plain steps, however fine a resonant
+    // deck integrates (budgetStep, velxio/velxio-prod#121).
+    const budgetStepS = analysis.budgetStep ? parseValueWithUnits(analysis.budgetStep) : stepS;
+    const windowS = parseValueWithUnits(analysis.stop);
+    const startS = startUpSeconds(cards, budgetStepS, windowS, analysis.period);
+    if (startS > 0 && windowS > 0) {
+      // A diode's conduction pulses want a finer step than the window's.
+      const runStepS = settledStepS(cards, stepS, budgetStepS);
+      resolved = {
+        ...analysis,
+        ...(runStepS !== stepS ? { step: runStepS.toExponential(3) } : {}),
+        start: startS.toExponential(6),
+        stop: (startS + windowS).toExponential(6),
+      };
+    }
+  }
+  switch (resolved.kind) {
     case 'op':
       lines.push('.op');
       break;
     case 'tran':
-      lines.push(`.tran ${analysis.step} ${analysis.stop}`);
+      lines.push(
+        resolved.start
+          ? `.tran ${resolved.step} ${resolved.stop} ${resolved.start}`
+          : `.tran ${resolved.step} ${resolved.stop}`,
+      );
       break;
     case 'ac': {
-      const kind = analysis.type ?? 'dec';
-      const points = analysis.points ?? 20;
-      const fstart = analysis.fstart ?? 1;
-      const fstop = analysis.fstop ?? 1e6;
+      const kind = resolved.type ?? 'dec';
+      const points = resolved.points ?? 20;
+      const fstart = resolved.fstart ?? 1;
+      const fstop = resolved.fstop ?? 1e6;
       lines.push(`.ac ${kind} ${points} ${fstart} ${fstop}`);
       break;
     }
@@ -554,7 +663,94 @@ export function buildNetlist(input: BuildNetlistInput): BuildNetlistResult {
     sourcedNets,
     partPoweredNets: poweredBy(boardPinNets, powering, partConnections),
     staticPads,
+    analysis: resolved,
+    memoryCells,
+    nodeMemoryCells,
   };
+}
+
+/**
+ * The logic gates on a feedback loop: a gate whose output reaches one of its
+ * own inputs through other gates (an SR latch is two). Returns the nets those
+ * outputs drive and, in component order, each output pin with the net and
+ * its power-up state: alternately low and high around each loop, so a
+ * two-gate latch powers up with its first gate's output low.
+ */
+function findLatches(
+  components: ReadonlyArray<ComponentForSpice>,
+  netOf: (componentId: string, pinName: string) => string | null,
+): { nets: Set<string>; outputs: Array<{ key: string; net: string; powerUpHigh: boolean }> } {
+  const edges = new Map<string, Set<string>>();
+  const drivers: Array<{ key: string; net: string }> = [];
+  for (const comp of components) {
+    for (const gate of logicGateLinks(comp.metadataId) ?? []) {
+      const out = netOf(comp.id, gate.output);
+      if (!out || isRailNet(out)) continue;
+      drivers.push({ key: `${comp.id}:${gate.output}`, net: out });
+      for (const pin of gate.inputs) {
+        const inp = netOf(comp.id, pin);
+        if (!inp || isRailNet(inp)) continue;
+        if (!edges.has(inp)) edges.set(inp, new Set());
+        edges.get(inp)!.add(out);
+      }
+    }
+  }
+  if (drivers.length === 0) return { nets: new Set(), outputs: [] };
+  // Strongly connected components (Tarjan): a net is on a loop when its
+  // component has more than one net, or it feeds itself.
+  const index = new Map<string, number>();
+  const low = new Map<string, number>();
+  const onStack = new Set<string>();
+  const stack: string[] = [];
+  const sccOf = new Map<string, number>();
+  let counter = 0;
+  let sccCount = 0;
+  const strong = (v: string): void => {
+    index.set(v, counter);
+    low.set(v, counter);
+    counter++;
+    stack.push(v);
+    onStack.add(v);
+    for (const w of edges.get(v) ?? []) {
+      if (!index.has(w)) {
+        strong(w);
+        low.set(v, Math.min(low.get(v)!, low.get(w)!));
+      } else if (onStack.has(w)) {
+        low.set(v, Math.min(low.get(v)!, index.get(w)!));
+      }
+    }
+    if (low.get(v) === index.get(v)) {
+      let w: string;
+      do {
+        w = stack.pop()!;
+        onStack.delete(w);
+        sccOf.set(w, sccCount);
+      } while (w !== v);
+      sccCount++;
+    }
+  };
+  for (const v of edges.keys()) if (!index.has(v)) strong(v);
+  const size = new Map<number, number>();
+  for (const c of sccOf.values()) size.set(c, (size.get(c) ?? 0) + 1);
+  const onLoop = (net: string): boolean => {
+    const c = sccOf.get(net);
+    if (c === undefined) return false;
+    return (size.get(c) ?? 0) > 1 || (edges.get(net)?.has(net) ?? false);
+  };
+  const nets = new Set<string>();
+  const outputs: Array<{ key: string; net: string; powerUpHigh: boolean }> = [];
+  const seen = new Map<number, number>();
+  const seenNets = new Set<string>();
+  for (const d of drivers) {
+    if (!onLoop(d.net) || seenNets.has(d.net)) continue;
+    seenNets.add(d.net);
+    nets.add(d.net);
+    const c = sccOf.get(d.net)!;
+    const k = seen.get(c) ?? 0;
+    seen.set(c, k + 1);
+    outputs.push({ key: d.key, net: d.net, powerUpHigh: k % 2 === 1 });
+  }
+  return { nets, outputs };
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -830,23 +1026,103 @@ function hasNet(netNames: Map<string, string>, name: string): boolean {
   return false;
 }
 
+/** Index of a card's last token that is not a `param=value`: a device's model or a subcircuit's name. */
+function lastNameIndex(t: readonly string[]): number {
+  for (let i = t.length - 1; i > 0; i--) if (!t[i]!.includes('=')) return i;
+  return -1;
+}
+
+/**
+ * The nodes a netlist card joins by a DC path, read by the syntax of its
+ * element letter, whatever the nodes are called. A part's internal node (a
+ * supply's or a battery's `<id>_int`, an ammeter's `amm_<id>_mid`, an LED's
+ * `<id>_sense_mid`) is a node like any other: the walk used to read a card's
+ * nodes only while they were canvas nets, so one of those ended the card,
+ * and every net reached only through such a part got a pull-down it did not
+ * need. Two ammeters in one loop then disagreed and a MOSFET gate drew
+ * 100 nA through its 100 MOhm (velxio/velxio-prod#99).
+ *
+ *   - R, L, V, I, B, F, H, W: their two nodes. A current source (I, F, a B
+ *     written as I = ...) holds no voltage; it has always counted as a path.
+ *     A resistor of OPEN_CONTACT_OHMS or more is a contact that may be open
+ *     (a button not pressed, a slide switch's other leg) and joins nothing
+ *     (velxio/velxio-prod#192).
+ *   - E, G: their two output nodes; their control nodes are only sensed.
+ *   - S: its control pair only. Its switch pair is a relay's contact, open or
+ *     closed as the solve decides (#192); the control pair is the coil's,
+ *     which conducts.
+ *   - D: anode and cathode. Q: collector, base and emitter. J, Z: drain,
+ *     gate and source. SPICE stamps GMIN across every pn junction, so a node
+ *     reached only through a junction is never singular and needs no
+ *     pull-down: an LED held off by a transistor carried 35 nA through one.
+ *   - M: drain and source (the channel, and a VDMOS's body diode), with the
+ *     bulk when the card has one (its junctions). The gate is insulated.
+ *   - X: every node before the subcircuit's name (optimistic: a subcircuit
+ *     is taken to join its pins).
+ *   - C and anything else: none. A capacitor is open at DC.
+ */
+function dcPathNodes(card: string): string[] {
+  const t = card.trim().split(/\s+/);
+  if (t.length < 3) return [];
+  switch (t[0]!.charAt(0).toUpperCase()) {
+    case 'R':
+      return parseValueWithUnits(t[3], 0) >= OPEN_CONTACT_OHMS ? [] : [t[1]!, t[2]!];
+    case 'L':
+    case 'V':
+    case 'I':
+    case 'B':
+    case 'F':
+    case 'H':
+    case 'W':
+    case 'E':
+    case 'G':
+    case 'D':
+      return [t[1]!, t[2]!];
+    case 'S':
+      return t.length >= 5 ? [t[3]!, t[4]!] : [];
+    case 'Q':
+    case 'J':
+    case 'Z':
+      return t.length >= 5 ? [t[1]!, t[2]!, t[3]!] : [];
+    case 'M': {
+      const model = lastNameIndex(t);
+      if (model < 4) return [];
+      return model >= 5 ? [t[1]!, t[3]!, t[4]!] : [t[1]!, t[3]!];
+    }
+    case 'X': {
+      const name = lastNameIndex(t);
+      return name > 1 ? t.slice(1, name) : [];
+    }
+    default:
+      return [];
+  }
+}
+
 /**
  * Detect nets that lack a DC path to ground.
  *
  * Does a graph walk starting from node "0" and "vcc_rail" (both have a
- * hard-wired source in every circuit that references them), traversing only
- * DC-conducting cards:
- *   - resistor (R...)
- *   - voltage source (V...)           — V-source is a DC short for connectivity
- *   - current source (I...)
- *   - inductor (L... — treated as DC short)
- *   - switch (S...)
- *   - behavioral source (B...)         — also connects output to ground via its KCL stamp
- *   - MNA-controlled source (E..., G..., F..., H...)
- *   - subckt instance (X...)           — optimistic: assume any X instance exposes DC paths
+ * hard-wired source in every circuit that references them), traversing the
+ * DC paths of every card (dcPathNodes): resistors, inductors, sources,
+ * junctions, a MOSFET's channel, subcircuits, a switch's control pair. A
+ * part's internal nodes join the walk like any other node, but only canvas
+ * nets are ever reported.
  *
  * Capacitors (C...) are intentionally NOT conductive in this walk — they are
- * OPEN at DC, so a net connected only via a C to another node is still floating.
+ * OPEN at DC, so a net connected only via a C to another node is still
+ * floating; and so is one reached only through a MOSFET's gate or the
+ * control input of a controlled source.
+ *
+ * Neither is a contact that may be open: a resistor of OPEN_CONTACT_OHMS or
+ * more (a button not pressed, a slide switch's other leg) or a relay's contact
+ * (an S card's switch pair, open or closed as the solve decides). An input
+ * that reaches nothing else floats on the bench, and here it gets the
+ * pull-down every floating input gets: through the 1 GOhm alone a gate input
+ * or an MCU pin wired to an open switch on 5 V sat at 5 V and read HIGH, a
+ * voltmeter's 10 MOhm pulled it to 49.5 mV, and the digital gate engine,
+ * where an open throw is Hi-Z, read the same input LOW
+ * (velxio/velxio-prod#192). A closed contact beside the pull-down outweighs
+ * it by ten orders of magnitude.
  *
  * An older version of this function used a "touched-by-R" heuristic: a net
  * was marked safe if ANY resistor terminal referenced it. That was wrong for
@@ -857,14 +1133,17 @@ function hasNet(netNames: Map<string, string>, name: string): boolean {
  *
  * Returns the set of nets that should receive an auto 100 MΩ pull-down.
  */
-function detectFloatingNets(netNames: Map<string, string>, cards: string[]): Set<string> {
-  const nets = new Set(netNames.values());
+function detectFloatingNets(
+  netNames: Map<string, string>,
+  cards: string[],
+  internalNodes: ReadonlySet<string> = new Set(),
+): Set<string> {
+  // Internal nodes (a pin's driver behind its output impedance) are paths
+  // like any net, so a load reached through one is not floating.
+  const nets = new Set([...netNames.values(), ...internalNodes]);
 
-  // Build an undirected adjacency list over DC-conducting elements.
-  // For a 2-terminal element the two nets on it become connected.
-  // For 3+ terminal (E/G/F/H, S, X) we connect every pair of listed nets —
-  // this is conservative (over-connects), which is the safe side for a
-  // "does this net have SOME DC path to ground" question.
+  // Build an undirected adjacency list over the DC paths of every card: the
+  // nodes a card joins (dcPathNodes) are all connected to one another.
   const adj = new Map<string, Set<string>>();
   function ensure(n: string) {
     if (!adj.has(n)) adj.set(n, new Set());
@@ -876,28 +1155,9 @@ function detectFloatingNets(netNames: Map<string, string>, cards: string[]): Set
     ensure(b).add(a);
   }
 
-  // Cards that define a DC path between their listed nets. Capacitor ('C')
-  // is deliberately excluded.
-  const DC_PREFIXES = 'RLVISBEGFHX';
-
   for (const line of cards) {
-    const prefix = line[0];
-    if (DC_PREFIXES.indexOf(prefix) < 0) continue;
-    const tokens = line.split(/\s+/);
-    // tokens[0] is the element name (e.g. "R_r1", "V_VCC_RAIL"). The nets
-    // appear next; stop at the first token that isn't a valid net name.
-    const pinNets: string[] = [];
-    for (let i = 1; i < tokens.length; i++) {
-      const t = tokens[i];
-      if (!nets.has(t) && t !== '0' && t !== 'vcc_rail') break;
-      pinNets.push(t);
-    }
-    // Connect every pair of pins — handles both 2-terminal and N-terminal.
-    for (let i = 0; i < pinNets.length; i++) {
-      for (let j = i + 1; j < pinNets.length; j++) {
-        link(pinNets[i], pinNets[j]);
-      }
-    }
+    const nodes = dcPathNodes(line);
+    for (let i = 1; i < nodes.length; i++) link(nodes[0]!, nodes[i]!);
   }
 
   // BFS from node "0" plus every present rail ("vcc_rail" / "aux_rail_*" —

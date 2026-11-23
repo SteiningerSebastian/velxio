@@ -31,7 +31,52 @@
 
 import { create } from 'zustand';
 
+/**
+ * Edges a digital channel keeps: at least the last MAX_SAMPLES, and the
+ * oldest are dropped TRIM_SLACK at a time once there are that many more.
+ *
+ * A push appends in place and pays for dropping in bulk. It used to copy the
+ * whole buffer and shift it on every edge, about 47 us at 10 000 edges, so a
+ * channel on a busy line (a UART frame, a PWM, and with velxio/velxio-prod#160
+ * every bit of a Wire or SPI transfer) cost the simulation more than the
+ * transfer itself.
+ */
 export const MAX_SAMPLES = 10_000;
+const TRIM_SLACK = MAX_SAMPLES / 4;
+
+/** One edge for a channel, as pushSampleBatch takes them. */
+export interface OscEdge {
+  channelId: string;
+  timeMs: number;
+  state: boolean;
+}
+
+/**
+ * Append an edge to a digital channel's buffer, in place; past
+ * MAX_SAMPLES + TRIM_SLACK the oldest are dropped down to MAX_SAMPLES, in a
+ * new array whose first sample says the level before it is not known
+ * (OscSample.unknownBefore, velxio/velxio-prod#196). Returns the buffer the
+ * channel holds now.
+ */
+function appendEdge(buf: OscSample[], timeMs: number, state: boolean): OscSample[] {
+  buf.push({ timeMs, state });
+  return trimmed(buf);
+}
+
+/** The buffer cut back to its last MAX_SAMPLES once it is past MAX_SAMPLES + TRIM_SLACK. */
+function trimmed(buf: OscSample[]): OscSample[] {
+  if (buf.length <= MAX_SAMPLES + TRIM_SLACK) return buf;
+  const kept = buf.slice(buf.length - MAX_SAMPLES);
+  kept[0] = { ...kept[0]!, unknownBefore: true };
+  return kept;
+}
+
+/** A channel's samples in time order, as pushSampleRuns takes them. */
+export interface OscRun {
+  channelId: string;
+  /** Kept as they are: the store neither copies nor changes them. */
+  samples: readonly OscSample[];
+}
 
 /**
  * Per-analog-channel sample cap.
@@ -141,6 +186,32 @@ export interface OscAnalogChannel extends OscChannelBase {
    * channel would go dead the moment the user taps the wire it was watching.
    */
   netName: string;
+  /**
+   * The part pin the wire was probed at, when the probe came from the canvas.
+   *
+   * Net names are positional (n0, n1, ... in NetlistBuilder's order), so any
+   * edit can renumber them: adding an LED on D2 moved a divider tap from n2 to
+   * n3, and a channel holding "n2" went on plotting the other node, under the
+   * same label (velxio/velxio-prod#119). The pin does not move; the feed looks
+   * its net up in every published pinNetMap (followProbes).
+   */
+  probe?: { componentId: string; pinName: string };
+  /**
+   * The probed pin is in no net of the latest solve (its part or its wire was
+   * removed). The trace is blank rather than frozen at its last capture, and
+   * the channel asks the solver for nothing until the pin is back.
+   */
+  lost?: boolean;
+  /**
+   * DC (absent) shows the signal with its bias; AC removes the capture's mean
+   * (`meanV`), as a scope's AC coupling does for a periodic signal, so a few
+   * millivolts of ripple on a 4.8 V collector can fill the row under Auto
+   * (velxio/velxio-prod#114). The samples keep the real volts either way.
+   */
+  coupling?: 'dc' | 'ac';
+  /** Time-weighted mean of the latest capture, in volts: what AC coupling
+   *  takes away. */
+  meanV?: number;
 }
 
 export type OscChannel = OscDigitalChannel | OscAnalogChannel;
@@ -154,6 +225,26 @@ export interface OscSample {
    *  at half the channel's amplitude, so a digital-only reader (the trigger's
    *  edge detector, the old draw path) still sees something sane. */
   volts?: number;
+  /**
+   * On the first sample of a digital channel only: the scope does not know
+   * the level before it, and the row shows "no data" there instead of the LOW
+   * it used to assume (velxio/velxio-prod#196). Either the buffer dropped the
+   * edges before it to stay within MAX_SAMPLES, or the channel was added or
+   * cleared while its board ran and this sample is the level the pin had then.
+   */
+  unknownBefore?: true;
+}
+
+/** Where a digital channel starts when its board is already running: the
+ *  pin's level and the board clock at that moment (see OscSample.unknownBefore). */
+export interface OscSeed {
+  timeMs: number;
+  state: boolean;
+}
+
+/** A channel's first sample when it starts from a seed. */
+function seedSamples(seed: OscSeed | null | undefined): OscSample[] {
+  return seed ? [{ timeMs: seed.timeMs, state: seed.state, unknownBefore: true }] : [];
 }
 
 export type TriggerMode = 'auto' | 'normal' | 'single';
@@ -184,9 +275,12 @@ interface OscilloscopeState {
    * 1   = trigger at the right edge (all pre-trigger samples)
    */
   triggerPosition: number;
-  /** Level an ANALOG trigger channel must cross, in volts. Ignored for
+  /** Level an ANALOG trigger channel must cross, in volts, as the row shows
+   *  it (after AC coupling). null, the default, is the middle of each capture,
+   *  so any signal that moves triggers: a fixed 1.65 V never fired on one
+   *  that stays below or above it (velxio/velxio-prod#114). Ignored for
    *  digital channels, which trigger on the bit flipping. */
-  triggerLevelV: number;
+  triggerLevelV: number | null;
   /** Simulator time of the most-recently latched trigger, or `null` when
    *  the scope is armed and waiting for an edge. */
   triggeredAtMs: number | null;
@@ -201,13 +295,60 @@ interface OscilloscopeState {
   openOscilloscope: () => void;
   setCapturing: (running: boolean) => void;
   setTimeDivMs: (ms: number) => void;
-  addChannel: (boardId: string, pin: number, pinLabel: string, amplitudeV?: number) => void;
+  /**
+   * Watch a board pin. `seed` is the pin's level and the board clock when the
+   * board is already running: the channel knows its level from then on, and
+   * not before (OscSample.unknownBefore). Without one the level before the
+   * first edge is the LOW every pad starts the run with.
+   */
+  addChannel: (
+    boardId: string,
+    pin: number,
+    pinLabel: string,
+    amplitudeV?: number,
+    seed?: OscSeed | null,
+  ) => void;
   /** Add (or reveal) a channel watching a SPICE net by name. Keyed on the NET
-   *  so it survives the wire it was probed from being split by a junction. */
-  addNetChannel: (netName: string, label: string) => string;
+   *  so it survives the wire it was probed from being split by a junction;
+   *  `probe` is the part pin the net was found at, which the channel follows
+   *  when the nets are renumbered (see OscAnalogChannel.probe). */
+  addNetChannel: (
+    netName: string,
+    label: string,
+    probe?: { componentId: string; pinName: string },
+  ) => string;
+  /**
+   * Point every probed analog channel at the net its pin is on in this
+   * published pinNetMap: a renumbered net is followed, a pin no net holds any
+   * more blanks the channel (`lost`). Called by the analog feed with each
+   * solve, before it plots.
+   */
+  followProbes: (pinNetMap: ReadonlyMap<string, string>) => void;
+  /**
+   * Drop every channel, its samples and the trigger it held. The channels of
+   * one circuit mean nothing in another: loading a project, an example or a
+   * new starter calls this (velxio/velxio-prod#119). The panel's own settings
+   * (open, time/div, trigger mode and edge) stay.
+   */
+  resetChannels: () => void;
   removeChannel: (id: string) => void;
   /** Push one sample; drops the oldest if the buffer is full */
   pushSample: (channelId: string, timeMs: number, state: boolean) => void;
+  /**
+   * Push many digital samples in one store update, in order, each exactly as
+   * pushSample would (the trigger looks at each one; a Single capture stops
+   * at the edge that fires it). For a producer that has a whole transfer at
+   * once: a synthesized I2C or SPI step (simulation/busScope.ts).
+   */
+  pushSampleBatch: (edges: readonly OscEdge[]) => void;
+  /**
+   * Push runs of digital samples, one per channel, in one store update: the
+   * shape a synthesized transfer comes in (simulation/busScope.ts). Each run
+   * is appended as pushSample would append its samples one by one. The
+   * trigger channel's run is looked at first: a Single capture that fires in
+   * it keeps, of every run, only the samples up to the edge that fired it.
+   */
+  pushSampleRuns: (runs: readonly OscRun[]) => void;
   /**
    * Append a whole transient capture to an analog channel in ONE update.
    *
@@ -219,12 +360,21 @@ interface OscilloscopeState {
   pushAnalogBlock: (channelId: string, timesMs: number[], volts: number[]) => void;
   setChannelVoltsPerDiv: (channelId: string, voltsPerDiv: number) => void;
   setChannelOffset: (channelId: string, yOffsetV: number) => void;
-  clearSamples: () => void;
+  /** Hand an analog channel's scale back to the fit of each capture, fitting
+   *  the capture it holds at once. */
+  setChannelAutoScale: (channelId: string) => void;
+  /** DC or AC coupling for an analog channel; an auto-scaled channel refits
+   *  its capture at once. */
+  setChannelCoupling: (channelId: string, coupling: 'dc' | 'ac') => void;
+  /** Empty every channel. `seeds`, by channel id, restart a digital channel
+   *  from the level its pin has now when its board is running (addChannel). */
+  clearSamples: (seeds?: Record<string, OscSeed | null | undefined>) => void;
 
   setTriggerMode: (mode: TriggerMode) => void;
   setTriggerChannel: (channelId: string | null) => void;
-  /** Volts an analog trigger channel must cross to fire. */
-  setTriggerLevelV: (volts: number) => void;
+  /** Volts an analog trigger channel must cross to fire; null for the
+   *  middle of each capture. */
+  setTriggerLevelV: (volts: number | null) => void;
   setTriggerEdge: (edge: TriggerEdge) => void;
   setTriggerPosition: (pos: number) => void;
   /** Reset the trigger (re-arm for single-shot, clear "triggered" status). */
@@ -282,6 +432,39 @@ function resolveTriggerChannelId(
   return channels[0]?.id ?? null;
 }
 
+/**
+ * The right edge of the window while the scope free-runs (Auto, and Normal or
+ * Single before their first trigger), in ms.
+ *
+ * It is the clock of the boards whose pins are on the scope (`clockMs`), so
+ * the trace keeps moving through a wait in which no edge comes: pinned to the
+ * last sample, a 13 s wait with the LED on never scrolled, and the edge that
+ * ended it jumped in from the right (velxio/velxio-prod#196). Never before the
+ * latest sample, which a frame synthesized ahead of the clock can be; and with
+ * no clock (no board running, or an engine that keeps none) it is that sample,
+ * as before. Analog captures are in the solver's own time and never move it
+ * past their end.
+ */
+export function freeRunWindowEndMs(
+  channels: readonly OscChannel[],
+  samples: Readonly<Record<string, readonly OscSample[]>>,
+  clockMs: number | null,
+  windowMs: number,
+): number {
+  let end = clockMs !== null && Number.isFinite(clockMs) ? clockMs : 0;
+  for (const ch of channels) {
+    const buf = samples[ch.id];
+    if (buf && buf.length > 0) end = Math.max(end, buf[buf.length - 1]!.timeMs);
+  }
+  return Math.max(end, windowMs);
+}
+
+/** The label an analog channel takes from its net: the net's name, and GND
+ *  for ground (net "0", which the solver never lists as a node). */
+export function analogNetLabel(netName: string): string {
+  return netName === '0' ? 'GND' : netName;
+}
+
 /** Vertical divisions on the scope screen (Oscilloscope.tsx draws the same 8). */
 export const OSC_V_DIVS = 8;
 
@@ -305,8 +488,57 @@ export function fitAnalogScale(
   const raw = span / OSC_V_DIVS;
   const decade = Math.pow(10, Math.floor(Math.log10(raw)));
   const step = [1, 2, 5, 10].find((m) => m * decade >= raw - 1e-12)! * decade;
-  const yOffsetV = Math.round((a + b) / 2 / step) * step;
+  // `|| 0`: a centre that rounds to -0 is 0.
+  const yOffsetV = Math.round((a + b) / 2 / step) * step || 0;
   return { voltsPerDiv: step, yOffsetV };
+}
+
+/** The volts a channel's row shows for a sample: the sample itself, or with
+ *  the capture's mean taken away under AC coupling. */
+export function displayShiftV(channel: OscChannel): number {
+  return channel.kind === 'analog' && channel.coupling === 'ac' ? (channel.meanV ?? 0) : 0;
+}
+
+/** Time-weighted mean of a capture (the trapezoid): ngspice crowds its points
+ *  where the signal moves fast, and a plain average would count those
+ *  moments many times over. */
+function timeMean(timesMs: readonly number[], volts: readonly number[]): number {
+  const n = Math.min(timesMs.length, volts.length);
+  if (n === 0) return 0;
+  let area = 0;
+  let span = 0;
+  for (let i = 1; i < n; i++) {
+    const dt = timesMs[i]! - timesMs[i - 1]!;
+    if (!(dt > 0)) continue;
+    area += ((volts[i]! + volts[i - 1]!) / 2) * dt;
+    span += dt;
+  }
+  if (span > 0) return area / span;
+  let sum = 0;
+  for (let i = 0; i < n; i++) sum += volts[i]!;
+  return sum / n;
+}
+
+/** The range of the capture an analog channel holds, as its row shows it. */
+function heldRange(
+  channel: OscAnalogChannel,
+  held: readonly OscSample[] | undefined,
+): { lo: number; hi: number } | null {
+  const shift = displayShiftV(channel);
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const p of held ?? []) {
+    if (p.volts === undefined) continue;
+    lo = Math.min(lo, p.volts - shift);
+    hi = Math.max(hi, p.volts - shift);
+  }
+  return lo <= hi ? { lo, hi } : null;
+}
+
+/** The fit of the capture an analog channel holds, as its row shows it. */
+function refitHeld(channel: OscAnalogChannel, held: readonly OscSample[] | undefined) {
+  const r = heldRange(channel, held);
+  return r ? fitAnalogScale(r.lo, r.hi) : null;
 }
 
 export const useOscilloscopeStore = create<OscilloscopeState>((set, get) => ({
@@ -320,7 +552,7 @@ export const useOscilloscopeStore = create<OscilloscopeState>((set, get) => ({
   triggerChannelId: null,
   triggerEdge: 'rising',
   triggerPosition: 0.5,
-  triggerLevelV: 1.65,
+  triggerLevelV: null,
   triggeredAtMs: null,
   triggerStatus: 'idle',
 
@@ -331,7 +563,7 @@ export const useOscilloscopeStore = create<OscilloscopeState>((set, get) => ({
 
   setTimeDivMs: (ms) => set({ timeDivMs: ms }),
 
-  addChannel: (boardId: string, pin: number, pinLabel: string, amplitudeV = 5) => {
+  addChannel: (boardId: string, pin: number, pinLabel: string, amplitudeV = 5, seed = null) => {
     const { channels } = get();
     // Deduplicate by (boardId, pin)
     if (channels.some((c) => c.kind === 'digital' && c.boardId === boardId && c.pin === pin)) {
@@ -359,16 +591,30 @@ export const useOscilloscopeStore = create<OscilloscopeState>((set, get) => ({
           yOffsetV: 0,
         },
       ],
-      samples: { ...s.samples, [id]: [] },
+      samples: { ...s.samples, [id]: seedSamples(seed) },
     }));
   },
 
-  addNetChannel: (netName: string, label: string) => {
+  addNetChannel: (netName: string, label: string, probe?: { componentId: string; pinName: string }) => {
     const { channels } = get();
-    const existing = channels.find((c) => c.kind === 'analog' && c.netName === netName);
-    if (existing) return existing.id;
+    const existing = channels.find(
+      (c): c is OscAnalogChannel => c.kind === 'analog' && c.netName === netName && !c.lost,
+    );
+    if (existing) {
+      // The same node probed again: one trace. Remember the pin if the
+      // channel had none, so it follows the node from now on.
+      if (probe && !existing.probe) {
+        set((s) => ({
+          channels: s.channels.map((c) => (c.id === existing.id ? { ...existing, probe } : c)),
+        }));
+      }
+      return existing.id;
+    }
 
-    const id = `osc-net-${netName}`;
+    // A channel keeps its id when its net is renumbered (followProbes), so
+    // `osc-net-<net>` may already be taken by a channel now on another net.
+    let id = `osc-net-${netName}`;
+    for (let k = 2; channels.some((c) => c.id === id); k++) id = `osc-net-${netName}-${k}`;
     const color = CHANNEL_COLORS[channels.length % CHANNEL_COLORS.length];
     set((s) => ({
       channels: [
@@ -381,12 +627,46 @@ export const useOscilloscopeStore = create<OscilloscopeState>((set, get) => ({
           color,
           voltsPerDiv: 1,
           yOffsetV: 0,
+          ...(probe ? { probe } : {}),
         },
       ],
       samples: { ...s.samples, [id]: [] },
     }));
     return id;
   },
+
+  followProbes: (pinNetMap) => {
+    const s = get();
+    let changed = false;
+    let samples = s.samples;
+    const channels = s.channels.map((c) => {
+      if (c.kind !== 'analog' || !c.probe) return c;
+      const net = pinNetMap.get(`${c.probe.componentId}:${c.probe.pinName}`);
+      if (net === undefined) {
+        if (c.lost) return c;
+        changed = true;
+        samples = { ...samples, [c.id]: [] };
+        return { ...c, lost: true };
+      }
+      if (net === c.netName && !c.lost) return c;
+      changed = true;
+      // A label that was the net's own name follows it; one the caller chose
+      // stays.
+      const label = c.label === analogNetLabel(c.netName) ? analogNetLabel(net) : c.label;
+      if (net !== c.netName) samples = { ...samples, [c.id]: [] };
+      return { ...c, netName: net, label, lost: false };
+    });
+    if (changed) set({ channels, samples });
+  },
+
+  resetChannels: () =>
+    set((s) => ({
+      channels: [],
+      samples: {},
+      triggerChannelId: null,
+      triggeredAtMs: null,
+      triggerStatus: s.triggerMode === 'auto' ? 'idle' : 'armed',
+    })),
 
   removeChannel: (id) => {
     set((s) => {
@@ -406,57 +686,107 @@ export const useOscilloscopeStore = create<OscilloscopeState>((set, get) => ({
   },
 
   pushSample: (channelId, timeMs, state) => {
+    get().pushSampleBatch([{ channelId, timeMs, state }]);
+  },
+
+  pushSampleBatch: (edges) => {
     const s = get();
     if (!s.running) return;
 
-    const buf = s.samples[channelId];
-    if (!buf) return;
-
-    // Trigger detection happens BEFORE we mutate the buffer so we can
-    // peek at the previous state on the trigger channel.  Auto mode
-    // skips this entirely — the scope free-runs.
-    let nextTriggeredAtMs = s.triggeredAtMs;
+    // The trigger looks at each edge BEFORE it is appended, so it can peek
+    // at the previous state on the trigger channel. Auto mode skips this
+    // entirely: the scope free-runs.
     // Annotated: the `if (!s.running) return` guard above narrows s.running to
     // the literal `true`, so an inferred binding rejects the `= false` that
     // single-shot capture needs.
-    let nextRunning: boolean = s.running;
-    let nextStatus: TriggerStatus = s.triggerStatus;
+    let running: boolean = s.running;
+    let triggeredAtMs = s.triggeredAtMs;
+    let triggerStatus: TriggerStatus = s.triggerStatus;
+    const triggerChId =
+      s.triggerMode !== 'auto' ? resolveTriggerChannelId(s.triggerChannelId, s.channels) : null;
+    const single = s.triggerMode === 'single';
 
-    if (s.triggerMode !== 'auto') {
-      const triggerChId = resolveTriggerChannelId(s.triggerChannelId, s.channels);
-      if (triggerChId === channelId) {
-        const triggerBuf = s.samples[triggerChId];
-        if (triggerBuf && triggerBuf.length > 0) {
-          const prevState = triggerBuf[triggerBuf.length - 1].state;
-          const single = s.triggerMode === 'single';
-          // Single-shot: once we've captured (status === 'captured'),
-          // ignore further edges until the user explicitly re-arms.
-          const captureLocked = single && s.triggerStatus === 'captured';
-          if (!captureLocked && matchesTriggerEdge(prevState, state, s.triggerEdge)) {
-            nextTriggeredAtMs = timeMs;
-            if (single) {
-              nextRunning = false;
-              nextStatus = 'captured';
-            } else {
-              nextStatus = 'triggered';
-            }
+    let samples: Record<string, OscSample[]> | null = null;
+    for (const e of edges) {
+      // A Single capture fired on an earlier edge of this batch: the rest
+      // never reach it, as later pushSample calls would not.
+      if (!running) break;
+      const buf = (samples ?? s.samples)[e.channelId];
+      if (!buf) continue;
+      if (e.channelId === triggerChId && buf.length > 0) {
+        const prevState = buf[buf.length - 1]!.state;
+        // Single-shot: once we've captured (status === 'captured'),
+        // ignore further edges until the user explicitly re-arms.
+        const captureLocked = single && triggerStatus === 'captured';
+        if (!captureLocked && matchesTriggerEdge(prevState, e.state, s.triggerEdge)) {
+          triggeredAtMs = e.timeMs;
+          if (single) {
+            running = false;
+            triggerStatus = 'captured';
+          } else {
+            triggerStatus = 'triggered';
           }
         }
       }
+      samples ??= { ...s.samples };
+      samples[e.channelId] = appendEdge(buf, e.timeMs, e.state);
     }
+    if (!samples) return;
+    set({
+      samples,
+      ...(triggeredAtMs !== s.triggeredAtMs ? { triggeredAtMs } : {}),
+      ...(running !== s.running ? { running } : {}),
+      ...(triggerStatus !== s.triggerStatus ? { triggerStatus } : {}),
+    });
+  },
 
-    set((cur) => {
-      const curBuf = cur.samples[channelId];
-      if (!curBuf) return cur;
-      const next = curBuf.slice();
-      if (next.length >= MAX_SAMPLES) next.shift();
-      next.push({ timeMs, state });
-      return {
-        samples: { ...cur.samples, [channelId]: next },
-        ...(nextTriggeredAtMs !== cur.triggeredAtMs ? { triggeredAtMs: nextTriggeredAtMs } : {}),
-        ...(nextRunning !== cur.running ? { running: nextRunning } : {}),
-        ...(nextStatus !== cur.triggerStatus ? { triggerStatus: nextStatus } : {}),
-      };
+  pushSampleRuns: (runs) => {
+    const s = get();
+    if (!s.running) return;
+    let running: boolean = s.running;
+    let triggeredAtMs = s.triggeredAtMs;
+    let triggerStatus: TriggerStatus = s.triggerStatus;
+    const triggerChId =
+      s.triggerMode !== 'auto' ? resolveTriggerChannelId(s.triggerChannelId, s.channels) : null;
+    const single = s.triggerMode === 'single';
+    // The trigger channel's run first: whether a Single capture fires, and
+    // at which edge, decides how much of every other run is kept.
+    const ordered =
+      triggerChId && runs.length > 1
+        ? [...runs.filter((r) => r.channelId === triggerChId), ...runs.filter((r) => r.channelId !== triggerChId)]
+        : runs;
+    let stopAtMs = Infinity;
+    let samples: Record<string, OscSample[]> | null = null;
+    for (const run of ordered) {
+      const buf = (samples ?? s.samples)[run.channelId];
+      if (!buf || run.samples.length === 0) continue;
+      const watching = run.channelId === triggerChId;
+      for (const smp of run.samples) {
+        if (smp.timeMs > stopAtMs) break;
+        if (watching && running && buf.length > 0) {
+          const captureLocked = single && triggerStatus === 'captured';
+          if (!captureLocked && matchesTriggerEdge(buf[buf.length - 1]!.state, smp.state, s.triggerEdge)) {
+            triggeredAtMs = smp.timeMs;
+            if (single) {
+              running = false;
+              triggerStatus = 'captured';
+              stopAtMs = smp.timeMs;
+            } else {
+              triggerStatus = 'triggered';
+            }
+          }
+        }
+        buf.push(smp);
+      }
+      samples ??= { ...s.samples };
+      samples[run.channelId] = trimmed(buf);
+    }
+    if (!samples) return;
+    set({
+      samples,
+      ...(triggeredAtMs !== s.triggeredAtMs ? { triggeredAtMs } : {}),
+      ...(running !== s.running ? { running } : {}),
+      ...(triggerStatus !== s.triggerStatus ? { triggerStatus } : {}),
     });
   },
 
@@ -485,13 +815,19 @@ export const useOscilloscopeStore = create<OscilloscopeState>((set, get) => ({
       if (p.volts > hi) hi = p.volts;
     }
     const mid = (lo + hi) / 2;
-    let channels = s0.channels;
+    // What the row shows: the volts, less the capture's mean under AC
+    // coupling. The fit and the trigger level work on that.
+    const meanV = timeMean(timesMs, volts);
+    const shift = channel.coupling === 'ac' ? meanV : 0;
+    let next0: OscAnalogChannel = channel.meanV === meanV ? channel : { ...channel, meanV };
     if (channel.autoScale !== false) {
-      const fit = fitAnalogScale(lo, hi);
-      if (fit.voltsPerDiv !== channel.voltsPerDiv || fit.yOffsetV !== channel.yOffsetV) {
-        channels = channels.map((c) => (c.id === channelId ? { ...c, ...fit } : c));
+      const fit = fitAnalogScale(lo - shift, hi - shift);
+      if (fit.voltsPerDiv !== next0.voltsPerDiv || fit.yOffsetV !== next0.yOffsetV) {
+        next0 = { ...next0, ...fit };
       }
     }
+    const channels =
+      next0 === channel ? s0.channels : s0.channels.map((c) => (c.id === channelId ? next0 : c));
     const next = points.map((p) => ({
       timeMs: p.timeMs,
       state: p.volts >= mid,
@@ -512,10 +848,11 @@ export const useOscilloscopeStore = create<OscilloscopeState>((set, get) => ({
       const single = s0.triggerMode === 'single';
       const captureLocked = single && s0.triggerStatus === 'captured';
       if (source === channelId && !captureLocked) {
+        const level = s0.triggerLevelV ?? mid - shift;
         for (let i = 1; i < next.length; i++) {
           if (
             matchesLevelCrossing(
-              next[i - 1]!.volts!, next[i]!.volts!, s0.triggerLevelV, s0.triggerEdge,
+              next[i - 1]!.volts! - shift, next[i]!.volts! - shift, level, s0.triggerEdge,
             )
           ) {
             triggeredAtMs = next[i]!.timeMs;
@@ -542,11 +879,25 @@ export const useOscilloscopeStore = create<OscilloscopeState>((set, get) => ({
 
   setChannelVoltsPerDiv: (channelId, voltsPerDiv) =>
     set((s) => ({
-      channels: s.channels.map((c) =>
-        c.id === channelId
-          ? { ...c, voltsPerDiv: Math.max(0.01, voltsPerDiv), autoScale: false }
-          : c,
-      ),
+      channels: s.channels.map((c) => {
+        if (c.id !== channelId) return c;
+        // The fit itself goes down to 0.5 mV/div; the floor only keeps a
+        // division from collapsing to nothing.
+        const vdiv = Math.max(1e-4, voltsPerDiv);
+        let yOffsetV = c.yOffsetV;
+        if (c.kind === 'analog' && c.autoScale !== false) {
+          // Leaving Auto for a finer scale: Auto's centre keeps 0 V in view,
+          // so 5 mV/div around it would show nothing of a 4.83 V collector.
+          // Centre on the capture when it would leave the row; an offset the
+          // user set is theirs and stays.
+          const r = heldRange(c, s.samples[c.id]);
+          const half = (vdiv * OSC_V_DIVS) / 2;
+          if (r && (r.lo < yOffsetV - half || r.hi > yOffsetV + half)) {
+            yOffsetV = Math.round((r.lo + r.hi) / 2 / vdiv) * vdiv || 0;
+          }
+        }
+        return { ...c, voltsPerDiv: vdiv, yOffsetV, autoScale: false };
+      }),
     })),
 
   setChannelOffset: (channelId, yOffsetV) =>
@@ -556,11 +907,30 @@ export const useOscilloscopeStore = create<OscilloscopeState>((set, get) => ({
       ),
     })),
 
-  clearSamples: () => {
+  setChannelAutoScale: (channelId) =>
+    set((s) => ({
+      channels: s.channels.map((c) => {
+        if (c.id !== channelId || c.kind !== 'analog') return c;
+        const auto: OscAnalogChannel = { ...c, autoScale: true };
+        return { ...auto, ...(refitHeld(auto, s.samples[c.id]) ?? {}) };
+      }),
+    })),
+
+  setChannelCoupling: (channelId, coupling) =>
+    set((s) => ({
+      channels: s.channels.map((c) => {
+        if (c.id !== channelId || c.kind !== 'analog') return c;
+        const coupled: OscAnalogChannel = { ...c, coupling };
+        if (c.autoScale === false) return coupled;
+        return { ...coupled, ...(refitHeld(coupled, s.samples[c.id]) ?? {}) };
+      }),
+    })),
+
+  clearSamples: (seeds) => {
     const { channels } = get();
     const fresh: Record<string, OscSample[]> = {};
     channels.forEach((c) => {
-      fresh[c.id] = [];
+      fresh[c.id] = c.kind === 'digital' ? seedSamples(seeds?.[c.id]) : [];
     });
     set({
       samples: fresh,

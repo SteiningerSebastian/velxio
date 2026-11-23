@@ -150,7 +150,14 @@
         "npn",
         "2n2222",
         "analog"
-      ]
+      ],
+      "ratings": {
+        "kind": "npn",
+        "vMax": 40,
+        "iMax": 0.6,
+        "pMax": 0.625,
+        "source": "onsemi P2N2222A/D, Rev. 7 (January 2013), Maximum Ratings: VCEO 40 Vdc; IC 600 mAdc continuous; PD 625 mW at TA = 25 \u00b0C (R\u03b8JA 200 \u00b0C/W)."
+      }
     },
     {
       "id": "bjt-bc547",
@@ -167,7 +174,14 @@
         "npn",
         "bc547",
         "analog"
-      ]
+      ],
+      "ratings": {
+        "kind": "npn",
+        "vMax": 45,
+        "iMax": 0.1,
+        "pMax": 0.625,
+        "source": "onsemi BC546/D (BC546B, BC547A/B/C, BC548B/C), Rev. 8 (August 2021), Maximum Ratings: VCEO 45 Vdc (BC547); IC 100 mAdc continuous; PD 625 mW at TA = 25 \u00b0C (R\u03b8JA 200 \u00b0C/W)."
+      }
     },
     {
       "id": "bjt-2n3055",
@@ -175,8 +189,18 @@
       "name": "2N3055 (NPN Power BJT)",
       "category": "analog",
       "description": "Power NPN bipolar transistor. 15A / 60V / 115W TO-3 package. Classic audio amp output stage.",
-      "properties": [],
-      "defaultValues": {},
+      "properties": [
+        {
+          "name": "heatsink",
+          "type": "boolean",
+          "defaultValue": false,
+          "control": "boolean",
+          "description": "Mounted on a heatsink: the power check holds the part to its P_D at a 25 \u00b0C case instead of what it sheds in free air"
+        }
+      ],
+      "defaultValues": {
+        "heatsink": false
+      },
       "pinCount": 3,
       "tags": [
         "transistor",
@@ -185,7 +209,15 @@
         "power",
         "2n3055",
         "analog"
-      ]
+      ],
+      "ratings": {
+        "kind": "npn",
+        "vMax": 60,
+        "iMax": 15,
+        "pMax": 6,
+        "pMaxHeatsink": 115,
+        "source": "onsemi 2N3055/D, Rev. 7 (October 2024), Maximum Ratings: VCEO 60 Vdc; IC 15 Adc continuous. PD in free air from TT Electronics 2N3055, Issue 3: 6 W at TA = 25 \u00b0C (R\u03b8JA 29.17 \u00b0C/W); onsemi rates only 115 W at TC = 25 \u00b0C, on an ideal heatsink."
+      }
     },
     {
       "id": "bjt-2n3906",
@@ -202,7 +234,14 @@
         "pnp",
         "2n3906",
         "analog"
-      ]
+      ],
+      "ratings": {
+        "kind": "pnp",
+        "vMax": 40,
+        "iMax": 0.2,
+        "pMax": 0.625,
+        "source": "onsemi 2N3906/D, Rev. 4 (February 2010), Maximum Ratings: VCEO 40 Vdc; IC 200 mAdc continuous; PD 625 mW at TA = 25 \u00b0C (R\u03b8JA 200 \u00b0C/W)."
+      }
     },
     {
       "id": "bjt-bc557",
@@ -219,14 +258,22 @@
         "pnp",
         "bc557",
         "analog"
-      ]
+      ],
+      "ratings": {
+        "kind": "pnp",
+        "vMax": 45,
+        "iMax": 0.1,
+        "iPulse": 0.2,
+        "pMax": 0.625,
+        "source": "onsemi BC556B/D (BC556B, BC557A/B/C, BC558B), Rev. 3 (March 2007), Maximum Ratings: VCEO -45 Vdc (BC557); IC -100 mAdc continuous, ICM -200 mA peak; PD 625 mW at TA = 25 \u00b0C (R\u03b8JA 200 \u00b0C/W)."
+      }
     },
     {
       "id": "mosfet-2n7000",
       "tagName": "wokwi-mosfet-2n7000",
       "name": "2N7000 (N-MOSFET)",
       "category": "analog",
-      "description": "Logic-level N-channel MOSFET. Vth \u2248 1.6 V, fully enhanced at 3.3 V \u2014 perfect for GPIO-driven load switching.",
+      "description": "Small-signal N-channel MOSFET, 60 V / 200 mA. VGS(th) 0.8-3 V, RDS(on) 1.8 \u03a9 typ at VGS 4.5 V. Switches LEDs, buzzers and small relays from a 5 V pin; from a 3.3 V pin it is only partly on (about 4 \u03a9, 0.2 A at most).",
       "properties": [],
       "defaultValues": {},
       "pinCount": 3,
@@ -238,16 +285,34 @@
         "logic-level",
         "2n7000",
         "analog"
-      ]
+      ],
+      "ratings": {
+        "kind": "nmos",
+        "vMax": 60,
+        "iMax": 0.2,
+        "iPulse": 0.5,
+        "pMax": 0.4,
+        "source": "onsemi NDS7002A/D (2N7000, 2N7002, NDS7002A), Rev. 11 (March 2025), Absolute Maximum Ratings: VDSS 60 V; ID 200 mA continuous, 500 mA pulsed; PD 400 mW at TA = 25 \u00b0C (R\u03b8JA 312.5 \u00b0C/W)."
+      }
     },
     {
       "id": "mosfet-irf540",
       "tagName": "wokwi-mosfet-irf540",
       "name": "IRF540 (N-MOSFET Power)",
       "category": "analog",
-      "description": "Power N-channel MOSFET. Vth \u2248 3 V (needs 10 V for full enhancement), 33 A / 100 V, R_DS(on) \u2248 77 m\u03a9. Classic motor / solenoid driver.",
-      "properties": [],
-      "defaultValues": {},
+      "description": "Power N-channel MOSFET, 100 V / 28 A, R_DS(on) \u2264 77 m\u03a9 at VGS 10 V. VGS(th) 2-4 V: it needs about 10 V on the gate to turn fully on; from a 5 V pin it carries a couple of amps at about 0.3 \u03a9, and 3.3 V leaves it off. Classic motor / solenoid driver.",
+      "properties": [
+        {
+          "name": "heatsink",
+          "type": "boolean",
+          "defaultValue": false,
+          "control": "boolean",
+          "description": "Mounted on a heatsink: the power check holds the part to its P_D at a 25 \u00b0C case instead of what it sheds in free air"
+        }
+      ],
+      "defaultValues": {
+        "heatsink": false
+      },
       "pinCount": 3,
       "tags": [
         "transistor",
@@ -257,7 +322,16 @@
         "power",
         "irf540",
         "analog"
-      ]
+      ],
+      "ratings": {
+        "kind": "nmos",
+        "vMax": 100,
+        "iMax": 28,
+        "iPulse": 110,
+        "pMax": 2.4,
+        "pMaxHeatsink": 150,
+        "source": "Vishay IRF540 (document 91021), Rev. C (02-Aug-2021), Absolute Maximum Ratings: VDS 100 V; ID 28 A continuous at TC = 25 \u00b0C, IDM 110 A pulsed. PD in free air: (TJ 175 \u00b0C - TA 25 \u00b0C) / RthJA 62 \u00b0C/W = 2.4 W; its 150 W is at TC = 25 \u00b0C, on an ideal heatsink."
+      }
     },
     {
       "id": "mosfet-irf9540",
@@ -265,8 +339,18 @@
       "name": "IRF9540 (P-MOSFET)",
       "category": "analog",
       "description": "Power P-channel MOSFET. Used for high-side load switching with logic input.",
-      "properties": [],
-      "defaultValues": {},
+      "properties": [
+        {
+          "name": "heatsink",
+          "type": "boolean",
+          "defaultValue": false,
+          "control": "boolean",
+          "description": "Mounted on a heatsink: the power check holds the part to its P_D at a 25 \u00b0C case instead of what it sheds in free air"
+        }
+      ],
+      "defaultValues": {
+        "heatsink": false
+      },
       "pinCount": 3,
       "tags": [
         "transistor",
@@ -275,16 +359,35 @@
         "p-channel",
         "irf9540",
         "analog"
-      ]
+      ],
+      "ratings": {
+        "kind": "pmos",
+        "vMax": 100,
+        "iMax": 19,
+        "iPulse": 72,
+        "pMax": 2.4,
+        "pMaxHeatsink": 150,
+        "source": "Vishay IRF9540 (document 91078), Rev. B (21-Mar-11), Absolute Maximum Ratings: VDS -100 V; ID -19 A continuous at TC = 25 \u00b0C, IDM -72 A pulsed. PD in free air: (TJ 175 \u00b0C - TA 25 \u00b0C) / RthJA 62 \u00b0C/W = 2.4 W; its 150 W is at TC = 25 \u00b0C, on an ideal heatsink."
+      }
     },
     {
       "id": "mosfet-fqp27p06",
       "tagName": "wokwi-mosfet-fqp27p06",
       "name": "FQP27P06 (P-MOSFET)",
       "category": "analog",
-      "description": "Logic-level P-channel MOSFET. Suitable for 3.3V / 5V gate drive.",
-      "properties": [],
-      "defaultValues": {},
+      "description": "P-channel power MOSFET, -60 V / -27 A, R_DS(on) 0.055 \u03a9 typ at VGS -10 V. VGS(th) -2 to -4 V: a 5 V gate swing turns it well on (about 0.1 \u03a9), 3.3 V barely. High-side load switching.",
+      "properties": [
+        {
+          "name": "heatsink",
+          "type": "boolean",
+          "defaultValue": false,
+          "control": "boolean",
+          "description": "Mounted on a heatsink: the power check holds the part to its P_D at a 25 \u00b0C case instead of what it sheds in free air"
+        }
+      ],
+      "defaultValues": {
+        "heatsink": false
+      },
       "pinCount": 3,
       "tags": [
         "transistor",
@@ -294,14 +397,23 @@
         "fqp27p06",
         "logic-level",
         "analog"
-      ]
+      ],
+      "ratings": {
+        "kind": "pmos",
+        "vMax": 60,
+        "iMax": 27,
+        "iPulse": 108,
+        "pMax": 2.4,
+        "pMaxHeatsink": 120,
+        "source": "onsemi FQP27P06/D, Rev. 4 (October 2024), Absolute Maximum Ratings: VDSS -60 V; ID -27 A continuous at TC = 25 \u00b0C, IDM -108 A pulsed. PD in free air: (TJ 175 \u00b0C - TA 25 \u00b0C) / R\u03b8JA 62.5 \u00b0C/W = 2.4 W; its 120 W is at TC = 25 \u00b0C, on an ideal heatsink."
+      }
     },
     {
       "id": "opamp-ideal",
       "tagName": "wokwi-opamp-ideal",
       "name": "Ideal Op-Amp",
       "category": "analog",
-      "description": "Idealized operational amplifier. Infinite gain, infinite input impedance, no saturation. Use for textbook circuits where real-chip limitations are irrelevant.",
+      "description": "Idealized operational amplifier: a gain of 10^6 (very high, not infinite), infinite input impedance, no supply and no saturation. Use for textbook circuits where real-chip limitations are irrelevant.",
       "properties": [],
       "defaultValues": {},
       "pinCount": 3,
@@ -318,7 +430,7 @@
       "tagName": "wokwi-opamp-lm358",
       "name": "LM358 (Dual Op-Amp)",
       "category": "analog",
-      "description": "Dual single-supply op-amp (one channel per part). Power it through V+ and V-: the output swings from near V- to about 1.5 V below V+, so a 15 V supply gives 0..13.5 V. V+ and V- left unwired run it from the board's logic rail and ground (3.3 V on an ESP32: the output stops near 2 V).",
+      "description": "Dual single-supply op-amp (one channel per part). Power it through V+ and V-: the output swings from near V- to about 1 V below V+ at light load, so a 15 V supply gives 0..14 V (a real LM358 is only guaranteed to reach V+ - 1.5 V, and takes inputs only up to there). V+ and V- left unwired run it from the board's logic rail and ground (3.3 V on an ESP32: the output stops near 2.3 V).",
       "properties": [],
       "defaultValues": {},
       "pinCount": 5,
@@ -370,7 +482,7 @@
       "tagName": "wokwi-opamp-lm324",
       "name": "LM324 (Quad Op-Amp)",
       "category": "analog",
-      "description": "Quad single-supply op-amp (one channel per part), electrically like the LM358. Power it through V+ and V-: the output swings from V- to about 1.5 V below V+. Unwired, it runs from the board's logic rail and ground.",
+      "description": "Quad single-supply op-amp (one channel per part), the LM358's quad sibling: it runs the same model and swings like it, from near V- to about 1 V below V+ at light load. Power it through V+ and V-. Unwired, it runs from the board's logic rail and ground.",
       "properties": [],
       "defaultValues": {},
       "pinCount": 5,
@@ -714,7 +826,7 @@
       "tagName": "wokwi-diode-1n5817",
       "name": "1N5817 (Schottky 20V)",
       "category": "analog",
-      "description": "Schottky diode, 1 A / 20 V. Vf \u2248 0.32 V at 1 A. Used in low-drop rectification and reverse-polarity protection.",
+      "description": "Schottky diode, 1 A / 20 V. Vf \u2264 0.45 V at 1 A (0.32 V at 0.1 A). Used in low-drop rectification and reverse-polarity protection.",
       "properties": [],
       "defaultValues": {},
       "pinCount": 2,
@@ -1240,10 +1352,26 @@
           "type": "string",
           "defaultValue": "220",
           "control": "text"
+        },
+        {
+          "name": "power",
+          "type": "string",
+          "defaultValue": "0.25",
+          "control": "select",
+          "options": [
+            "0.125",
+            "0.25",
+            "0.5",
+            "1",
+            "2",
+            "5"
+          ],
+          "description": "Power rating (W)"
         }
       ],
       "defaultValues": {
-        "value": "220"
+        "value": "220",
+        "power": "0.25"
       },
       "pinCount": 0,
       "tags": [
@@ -1264,10 +1392,26 @@
           "type": "string",
           "defaultValue": "330",
           "control": "text"
+        },
+        {
+          "name": "power",
+          "type": "string",
+          "defaultValue": "0.25",
+          "control": "select",
+          "options": [
+            "0.125",
+            "0.25",
+            "0.5",
+            "1",
+            "2",
+            "5"
+          ],
+          "description": "Power rating (W)"
         }
       ],
       "defaultValues": {
-        "value": "330"
+        "value": "330",
+        "power": "0.25"
       },
       "pinCount": 0,
       "tags": [
@@ -1288,10 +1432,26 @@
           "type": "string",
           "defaultValue": "470",
           "control": "text"
+        },
+        {
+          "name": "power",
+          "type": "string",
+          "defaultValue": "0.25",
+          "control": "select",
+          "options": [
+            "0.125",
+            "0.25",
+            "0.5",
+            "1",
+            "2",
+            "5"
+          ],
+          "description": "Power rating (W)"
         }
       ],
       "defaultValues": {
-        "value": "470"
+        "value": "470",
+        "power": "0.25"
       },
       "pinCount": 0,
       "tags": [
@@ -1312,10 +1472,26 @@
           "type": "string",
           "defaultValue": "1000",
           "control": "text"
+        },
+        {
+          "name": "power",
+          "type": "string",
+          "defaultValue": "0.25",
+          "control": "select",
+          "options": [
+            "0.125",
+            "0.25",
+            "0.5",
+            "1",
+            "2",
+            "5"
+          ],
+          "description": "Power rating (W)"
         }
       ],
       "defaultValues": {
-        "value": "1000"
+        "value": "1000",
+        "power": "0.25"
       },
       "pinCount": 0,
       "tags": [
@@ -1336,10 +1512,26 @@
           "type": "string",
           "defaultValue": "2200",
           "control": "text"
+        },
+        {
+          "name": "power",
+          "type": "string",
+          "defaultValue": "0.25",
+          "control": "select",
+          "options": [
+            "0.125",
+            "0.25",
+            "0.5",
+            "1",
+            "2",
+            "5"
+          ],
+          "description": "Power rating (W)"
         }
       ],
       "defaultValues": {
-        "value": "2200"
+        "value": "2200",
+        "power": "0.25"
       },
       "pinCount": 0,
       "tags": [
@@ -1360,10 +1552,26 @@
           "type": "string",
           "defaultValue": "4700",
           "control": "text"
+        },
+        {
+          "name": "power",
+          "type": "string",
+          "defaultValue": "0.25",
+          "control": "select",
+          "options": [
+            "0.125",
+            "0.25",
+            "0.5",
+            "1",
+            "2",
+            "5"
+          ],
+          "description": "Power rating (W)"
         }
       ],
       "defaultValues": {
-        "value": "4700"
+        "value": "4700",
+        "power": "0.25"
       },
       "pinCount": 0,
       "tags": [
@@ -1384,10 +1592,26 @@
           "type": "string",
           "defaultValue": "10000",
           "control": "text"
+        },
+        {
+          "name": "power",
+          "type": "string",
+          "defaultValue": "0.25",
+          "control": "select",
+          "options": [
+            "0.125",
+            "0.25",
+            "0.5",
+            "1",
+            "2",
+            "5"
+          ],
+          "description": "Power rating (W)"
         }
       ],
       "defaultValues": {
-        "value": "10000"
+        "value": "10000",
+        "power": "0.25"
       },
       "pinCount": 0,
       "tags": [
@@ -1408,10 +1632,26 @@
           "type": "string",
           "defaultValue": "22000",
           "control": "text"
+        },
+        {
+          "name": "power",
+          "type": "string",
+          "defaultValue": "0.25",
+          "control": "select",
+          "options": [
+            "0.125",
+            "0.25",
+            "0.5",
+            "1",
+            "2",
+            "5"
+          ],
+          "description": "Power rating (W)"
         }
       ],
       "defaultValues": {
-        "value": "22000"
+        "value": "22000",
+        "power": "0.25"
       },
       "pinCount": 0,
       "tags": [
@@ -1432,10 +1672,26 @@
           "type": "string",
           "defaultValue": "47000",
           "control": "text"
+        },
+        {
+          "name": "power",
+          "type": "string",
+          "defaultValue": "0.25",
+          "control": "select",
+          "options": [
+            "0.125",
+            "0.25",
+            "0.5",
+            "1",
+            "2",
+            "5"
+          ],
+          "description": "Power rating (W)"
         }
       ],
       "defaultValues": {
-        "value": "47000"
+        "value": "47000",
+        "power": "0.25"
       },
       "pinCount": 0,
       "tags": [
@@ -1456,10 +1712,26 @@
           "type": "string",
           "defaultValue": "100000",
           "control": "text"
+        },
+        {
+          "name": "power",
+          "type": "string",
+          "defaultValue": "0.25",
+          "control": "select",
+          "options": [
+            "0.125",
+            "0.25",
+            "0.5",
+            "1",
+            "2",
+            "5"
+          ],
+          "description": "Power rating (W)"
         }
       ],
       "defaultValues": {
-        "value": "100000"
+        "value": "100000",
+        "power": "0.25"
       },
       "pinCount": 0,
       "tags": [
@@ -1480,10 +1752,26 @@
           "type": "string",
           "defaultValue": "1000000",
           "control": "text"
+        },
+        {
+          "name": "power",
+          "type": "string",
+          "defaultValue": "0.25",
+          "control": "select",
+          "options": [
+            "0.125",
+            "0.25",
+            "0.5",
+            "1",
+            "2",
+            "5"
+          ],
+          "description": "Power rating (W)"
         }
       ],
       "defaultValues": {
-        "value": "1000000"
+        "value": "1000000",
+        "power": "0.25"
       },
       "pinCount": 0,
       "tags": [
@@ -2357,8 +2645,22 @@
       "name": "BMP280 (Pressure + Temp)",
       "category": "sensor",
       "thumbnail": "<svg width=\"64\" height=\"64\" xmlns=\"http://www.w3.org/2000/svg\"><rect width=\"64\" height=\"64\" rx=\"4\" fill=\"#0d1730\"/><rect x=\"10\" y=\"8\" width=\"44\" height=\"48\" rx=\"2\" fill=\"#172952\"/><circle cx=\"16\" cy=\"15\" r=\"3\" fill=\"#9a916c\"/><circle cx=\"26\" cy=\"15\" r=\"3\" fill=\"#9a916c\"/><circle cx=\"36\" cy=\"15\" r=\"3\" fill=\"#9a916c\"/><circle cx=\"46\" cy=\"15\" r=\"3\" fill=\"#9a916c\"/><rect x=\"22\" y=\"24\" width=\"14\" height=\"10\" fill=\"#303030\"/><rect x=\"14\" y=\"38\" width=\"18\" height=\"14\" fill=\"#e0e0e0\"/><text x=\"23\" y=\"48\" text-anchor=\"middle\" font-size=\"5\" fill=\"#222\" font-family=\"monospace\" font-weight=\"bold\">BMP280</text><circle cx=\"44\" cy=\"45\" r=\"5\" fill=\"#999\"/></svg>",
-      "properties": [],
-      "defaultValues": {},
+      "properties": [
+        {
+          "name": "i2cAddress",
+          "type": "string",
+          "defaultValue": "0x76",
+          "control": "select",
+          "options": [
+            "0x76",
+            "0x77"
+          ],
+          "description": "I2C address. On the real board SDO picks it: 0x76 with SDO to GND, 0x77 with SDO to VDDIO. Give a second BMP280 on the bus the other one."
+        }
+      ],
+      "defaultValues": {
+        "i2cAddress": "0x76"
+      },
       "pinCount": 4,
       "tags": [
         "sensor",
@@ -2671,7 +2973,27 @@
   },
   "resistor": {
     "name": "Resistor (custom)",
-    "thumbnail": "<svg width=\"64\" height=\"64\" xmlns=\"http://www.w3.org/2000/svg\"><rect width=\"64\" height=\"64\" fill=\"#1a2332\" rx=\"4\"/>\n    <rect x=\"6\" y=\"29\" width=\"52\" height=\"3\" fill=\"#aaa\"/>\n    <rect x=\"14\" y=\"22\" width=\"36\" height=\"17\" rx=\"3\" fill=\"#d5b597\" stroke=\"#a37b4f\" stroke-width=\"0.6\"/>\n    <rect x=\"20\" y=\"22\" width=\"3\" height=\"17\" fill=\"#8F4814\"/>\n    <rect x=\"26\" y=\"22\" width=\"3\" height=\"17\" fill=\"#000\"/>\n    <rect x=\"32\" y=\"22\" width=\"3\" height=\"17\" fill=\"#FB0000\"/>\n    <rect x=\"42\" y=\"22\" width=\"3\" height=\"17\" fill=\"#F1D863\"/>\n    <text x=\"32\" y=\"56\" text-anchor=\"middle\" font-size=\"10\" font-family=\"sans-serif\" fill=\"#e5e7eb\" font-weight=\"bold\">?\u03a9</text></svg>"
+    "thumbnail": "<svg width=\"64\" height=\"64\" xmlns=\"http://www.w3.org/2000/svg\"><rect width=\"64\" height=\"64\" fill=\"#1a2332\" rx=\"4\"/>\n    <rect x=\"6\" y=\"29\" width=\"52\" height=\"3\" fill=\"#aaa\"/>\n    <rect x=\"14\" y=\"22\" width=\"36\" height=\"17\" rx=\"3\" fill=\"#d5b597\" stroke=\"#a37b4f\" stroke-width=\"0.6\"/>\n    <rect x=\"20\" y=\"22\" width=\"3\" height=\"17\" fill=\"#8F4814\"/>\n    <rect x=\"26\" y=\"22\" width=\"3\" height=\"17\" fill=\"#000\"/>\n    <rect x=\"32\" y=\"22\" width=\"3\" height=\"17\" fill=\"#FB0000\"/>\n    <rect x=\"42\" y=\"22\" width=\"3\" height=\"17\" fill=\"#F1D863\"/>\n    <text x=\"32\" y=\"56\" text-anchor=\"middle\" font-size=\"10\" font-family=\"sans-serif\" fill=\"#e5e7eb\" font-weight=\"bold\">?\u03a9</text></svg>",
+    "properties": {
+      "power": {
+        "name": "power",
+        "type": "string",
+        "defaultValue": "0.25",
+        "control": "select",
+        "options": [
+          "0.125",
+          "0.25",
+          "0.5",
+          "1",
+          "2",
+          "5"
+        ],
+        "description": "Power rating (W)"
+      }
+    },
+    "defaultValues": {
+      "power": "0.25"
+    }
   },
   "capacitor": {
     "name": "Cap. ceramic (custom)",
@@ -2827,11 +3149,74 @@
         "control": "number",
         "min": 0.1,
         "description": "LDR slope: log(R) per log(lux) (GL5528: 0.6; Wokwi default: 0.7)"
+      },
+      "threshold": {
+        "name": "threshold",
+        "type": "number",
+        "defaultValue": 2.5,
+        "control": "number",
+        "min": 0,
+        "description": "Digital output threshold, V: DO is HIGH while AO is above it, in the dark (Wokwi default: 2.5)"
       }
     },
     "defaultValues": {
       "rl10": 15,
-      "gamma": 0.6
+      "gamma": 0.6,
+      "threshold": 2.5
+    }
+  },
+  "ntc-temperature-sensor": {
+    "description": "NTC thermistor module: the NTC from OUT to GND under a fixed pull-up from VCC, so OUT = VCC x R_ntc / (R_ntc + pull-up) and falls as it warms. R_ntc = R0 x exp(beta x (1/T - 1/298.15 K)). Set the temperature in the sensor panel.",
+    "properties": {
+      "R0": {
+        "name": "R0",
+        "type": "number",
+        "defaultValue": 10000,
+        "control": "number",
+        "min": 1,
+        "description": "NTC resistance at 25 \u00b0C, ohm"
+      },
+      "beta": {
+        "name": "beta",
+        "type": "number",
+        "defaultValue": 3950,
+        "control": "number",
+        "min": 1,
+        "description": "NTC beta constant, K (3950 is the common 10k module)"
+      },
+      "pullup": {
+        "name": "pullup",
+        "type": "number",
+        "defaultValue": 10000,
+        "control": "number",
+        "min": 1,
+        "description": "The module's fixed resistor from VCC to OUT, ohm"
+      }
+    },
+    "defaultValues": {
+      "R0": 10000,
+      "beta": 3950,
+      "pullup": 10000
+    },
+    "pinCount": 3
+  },
+  "rgb-led": {
+    "properties": {
+      "common": {
+        "name": "common",
+        "type": "string",
+        "defaultValue": "auto",
+        "control": "select",
+        "options": [
+          "auto",
+          "cathode",
+          "anode"
+        ],
+        "description": "Which end of the three LEDs COM is. auto reads the wiring: COM on a supply rail is a common anode, anywhere else (ground) a common cathode."
+      }
+    },
+    "defaultValues": {
+      "common": "auto"
     }
   }
 }

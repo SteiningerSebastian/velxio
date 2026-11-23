@@ -21,13 +21,25 @@
 import { useElectricalStore } from '../../store/useElectricalStore';
 import { useSimulatorStore } from '../../store/useSimulatorStore';
 import { parseValueWithUnits } from '../spice/valueParser';
+import { pinCurrentFindings } from '../verify/pinCurrent';
+import { readSpan, spanStats } from '../spice/waveformStats';
+import type { TimeWaveforms } from '../spice/types';
+import { formatRating, isRatedResistor, resistorPowerRating } from './resistorRating';
+import {
+  readTransistor,
+  transistorFindings,
+  type RatingsLookup,
+  type TransistorFinding,
+  type TransistorSolveView,
+} from '../verify/transistorStress';
+import { ratedPartFromRegistry } from '../verify/partRatings';
+import { flagProperty } from '../../utils/flagProperty';
 
 // ── Tuning ────────────────────────────────────────────────────────────────
 /** Sustained over-limit time before destruction (the "thermal" delay), ms. */
 const BURN_DELAY_MS = 700;
 /** At or above this × the limit, destruction is instant (catastrophic). */
 const CATASTROPHIC_RATIO = 3;
-const RESISTOR_DEFAULT_W = 0.25;
 /** Burn a resistor only past 2x its rating (verifier already warns at 1x). */
 const RESISTOR_BURN_SAFETY = 2;
 const CAP_DEFAULT_V = 25;
@@ -38,8 +50,9 @@ interface ComponentLike {
   properties?: Record<string, unknown>;
 }
 
+/** The resistors the circuit check rates too (resistorRating). */
 export function isBurnoutResistor(metadataId: string): boolean {
-  return metadataId === 'resistor' || metadataId === 'resistor-us' || metadataId.startsWith('resistor-');
+  return isRatedResistor(metadataId);
 }
 export function isBurnoutElectrolyticCap(metadataId: string): boolean {
   return metadataId === 'capacitor-electrolytic' || metadataId.startsWith('cap-elec');
@@ -51,57 +64,141 @@ function parseVolts(raw: unknown): number {
 }
 
 /**
+ * What the published solve says the circuit did, beyond its last instant, as
+ * the electrical store holds it: the transient capture of the state (a
+ * generator's sine, a supply in AC mode) and the pad states of the publish
+ * window with their shares of it (a PWM pad on a static load).
+ */
+export interface StressHistory {
+  timeWaveforms?: TimeWaveforms;
+  window?: { states: ReadonlyArray<{ weight: number; nodeVoltages: Record<string, number> }> };
+}
+
+/** A voltage between two nets over what the solve published. */
+interface Drop {
+  /** Time-weighted mean of its square: what heats a resistor. */
+  meanSquare: number;
+  min: number;
+  max: number;
+  /** Taken over a capture or a window, not one instant. */
+  averaged: boolean;
+}
+
+/**
+ * V(a) - V(b) as heat and insulation see it. A resistor heats with the mean
+ * of V^2 / R, and a capacitor's dielectric fails at the highest voltage it
+ * sees. Both read the last sample of a transient, which for a generator's
+ * whole number of periods is a zero crossing: 12 V peak across 100 ohm,
+ * 0.72 W on average, read 1.4e-30 W (velxio/velxio-prod#117). So: over the
+ * capture, on the span the meters read (readSpan, whole periods after the
+ * start-up), time-weighted; else over the window's pad states, by their
+ * shares; else the instant.
+ */
+function dropOf(
+  a: string,
+  b: string,
+  nodeVoltages: Record<string, number>,
+  history: StressHistory | undefined,
+): Drop | null {
+  const tw = history?.timeWaveforms;
+  if (tw && tw.time.length > 1) {
+    const samples = (net: string) => (net === '0' ? undefined : tw.nodes.get(net));
+    const sa = samples(a);
+    const sb = samples(b);
+    if ((sa || a === '0') && (sb || b === '0')) {
+      const n = tw.time.length;
+      const diff = new Array<number>(n);
+      for (let i = 0; i < n; i++) diff[i] = (sa ? sa[i] ?? NaN : 0) - (sb ? sb[i] ?? NaN : 0);
+      const span = readSpan(tw.time, tw.period);
+      const stats = span ? spanStats(tw.time, diff, span) : null;
+      if (stats) return { meanSquare: stats.rms * stats.rms, min: stats.min, max: stats.max, averaged: true };
+    }
+  }
+  const at = (volts: Record<string, number>, net: string): number | undefined => {
+    if (net === '0') return 0;
+    const v = volts[net];
+    return Number.isFinite(v) ? v : undefined;
+  };
+  const states = history?.window?.states;
+  if (states && states.length > 1) {
+    let total = 0;
+    let sumSq = 0;
+    let min = Infinity;
+    let max = -Infinity;
+    for (const st of states) {
+      const va = at(st.nodeVoltages, a);
+      const vb = at(st.nodeVoltages, b);
+      if (va === undefined || vb === undefined || !(st.weight > 0)) continue;
+      const v = va - vb;
+      total += st.weight;
+      sumSq += st.weight * v * v;
+      if (v < min) min = v;
+      if (v > max) max = v;
+    }
+    if (total > 0) return { meanSquare: sumSq / total, min, max, averaged: true };
+  }
+  const va = at(nodeVoltages, a);
+  const vb = at(nodeVoltages, b);
+  if (va === undefined || vb === undefined) return null;
+  const v = va - vb;
+  return { meanSquare: v * v, min: v, max: v, averaged: false };
+}
+
+/**
  * Stress ratio for a part (>1 means over its rating), plus a fault message.
- * Pure: depends only on the component + the solved nets. Returns null when the
+ * Pure: depends only on the component + the solved nets (and, when given,
+ * what the solve published over time: StressHistory). Returns null when the
  * part isn't a monitored type or its terminals aren't both on solved nets.
  */
 export function componentStress(
   comp: ComponentLike,
   nodeVoltages: Record<string, number>,
   pinNetMap: Map<string, string>,
+  history?: StressHistory,
 ): { ratio: number; message: string } | null {
-  const netV = (pin: string): number | undefined => {
-    const net = pinNetMap.get(`${comp.id}:${pin}`);
-    if (net === undefined) return undefined;
-    if (net === '0') return 0;
-    const v = nodeVoltages[net];
-    return Number.isFinite(v) ? v : undefined;
-  };
+  const net = (pin: string): string | undefined => pinNetMap.get(`${comp.id}:${pin}`);
 
   if (isBurnoutResistor(comp.metadataId)) {
-    const v1 = netV('1');
-    const v2 = netV('2');
-    if (v1 === undefined || v2 === undefined) return null;
+    const n1 = net('1');
+    const n2 = net('2');
+    if (n1 === undefined || n2 === undefined) return null;
+    const drop = dropOf(n1, n2, nodeVoltages, history);
+    if (!drop) return null;
     const R = parseValueWithUnits(comp.properties?.value, 1000);
     if (!Number.isFinite(R) || R <= 0) return null;
-    const power = (v1 - v2) ** 2 / R;
-    const rated =
-      typeof comp.properties?.power === 'number' ? (comp.properties.power as number) : RESISTOR_DEFAULT_W;
+    const power = drop.meanSquare / R;
+    // The part's power property, as the inspector stores it ("0.5") or a
+    // project holds it (0.5); 1/4 W when it says nothing (#104).
+    const rated = resistorPowerRating(comp.properties);
     // 2x safety factor: the pre-flight verifier already WARNS (non-blocking) at
     // 1x — teaching circuits often over-drive a resistor on purpose — so we
     // only physically burn it at genuine overload (>2x rated sustained).
     return {
       ratio: power / (RESISTOR_BURN_SAFETY * rated),
-      message: `Resistor ${comp.id} overheated — dissipating ${power.toFixed(2)} W, above its ${rated} W rating. It burned out. Use a higher-wattage resistor or a larger value.`,
+      message:
+        `Resistor ${comp.id} overheated — dissipating ${power.toFixed(2)} W${drop.averaged ? ' on average' : ''}, ` +
+        `above its ${formatRating(rated)} rating. It burned out. Pick a higher power rating for it in its ` +
+        `properties, or a larger value.`,
     };
   }
 
   if (isBurnoutElectrolyticCap(comp.metadataId)) {
-    const vp = netV('+');
-    const vn = netV('−') ?? netV('-');
-    if (vp === undefined || vn === undefined) return null;
-    const v = vp - vn;
+    const np = net('+');
+    const nn = net('−') ?? net('-');
+    if (np === undefined || nn === undefined) return null;
+    const drop = dropOf(np, nn, nodeVoltages, history);
+    if (!drop) return null;
     const rated = parseVolts(comp.properties?.voltage) || CAP_DEFAULT_V;
-    if (v < -0.5) {
+    if (drop.min < -0.5) {
       // Reverse polarity destroys an electrolytic regardless of magnitude.
       return {
         ratio: CATASTROPHIC_RATIO,
-        message: `Electrolytic capacitor ${comp.id} was connected backwards (${Math.abs(v).toFixed(1)} V reverse) and burst. Swap its + and - terminals.`,
+        message: `Electrolytic capacitor ${comp.id} was connected backwards (${Math.abs(drop.min).toFixed(1)} V reverse) and burst. Swap its + and - terminals.`,
       };
     }
     return {
-      ratio: v / rated,
-      message: `Electrolytic capacitor ${comp.id} burst — ${v.toFixed(1)} V across it, above its ${rated} V rating. Use a higher-voltage capacitor.`,
+      ratio: drop.max / rated,
+      message: `Electrolytic capacitor ${comp.id} burst — ${drop.max.toFixed(1)} V across it${drop.averaged ? ' at its peak' : ''}, above its ${rated} V rating. Use a higher-voltage capacitor.`,
     };
   }
   return null;
@@ -143,13 +240,138 @@ function emitFault(id: string, message: string): void {
   }
 }
 
+/**
+ * Board pins over their current (velxio/velxio-prod#140): each pin and each
+ * board total is reported once per run, again only if it gets worse
+ * (warning, then error). A pin is not destroyed: a real one may survive, or
+ * fail later, and the sketch keeps running either way.
+ */
+const reportedPinCurrent = new Map<string, 'warning' | 'error'>();
+
+function checkPinCurrents(): void {
+  const { boards } = useSimulatorStore.getState();
+  const { branchCurrents, pinNetMap } = useElectricalStore.getState();
+  if (!boards?.length || !branchCurrents) return;
+  for (const f of pinCurrentFindings(boards, branchCurrents, pinNetMap)) {
+    const key = `${f.boardId}:${f.pinName ?? '*'}`;
+    const before = reportedPinCurrent.get(key);
+    if (before === f.severity || before === 'error') continue;
+    reportedPinCurrent.set(key, f.severity);
+    // eslint-disable-next-line no-console
+    console.warn(`[pin-current] ${f.message}`);
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+      try {
+        window.dispatchEvent(
+          new CustomEvent('velxio-circuit-fault', {
+            detail: { componentId: f.boardId, kind: 'pin-current', message: f.message, severity: f.severity },
+          }),
+        );
+      } catch {
+        /* CustomEvent unavailable — the console.warn is enough */
+      }
+    }
+  }
+}
+
+/**
+ * The transistors a published solve takes past a datasheet rating
+ * (velxio/velxio-prod#138): V_CEO / V_DSS at its highest, the current, the
+ * mean power (transistorStress). The step after a pad edge is where a coil
+ * switched off with no flyback diode kicks: the circuit check before Run
+ * holds every pin HIGH and never sees that edge. Parts without ratings in
+ * their metadata (`ratingsOf`) are skipped.
+ */
+export function transistorStressFindings(
+  components: ReadonlyArray<ComponentLike>,
+  pinNetMap: ReadonlyMap<string, string>,
+  view: TransistorSolveView,
+  ratingsOf: RatingsLookup = ratedPartFromRegistry,
+): Array<{ componentId: string; finding: TransistorFinding }> {
+  const out: Array<{ componentId: string; finding: TransistorFinding }> = [];
+  for (const comp of components) {
+    const part = ratingsOf(comp.metadataId);
+    if (!part) continue;
+    const reading = readTransistor(comp.id, part.ratings.kind, pinNetMap, view);
+    if (!reading) continue;
+    const onHeatsink = flagProperty(comp.properties?.heatsink);
+    for (const finding of transistorFindings(comp.id, part, reading, onHeatsink)) {
+      out.push({ componentId: comp.id, finding });
+    }
+  }
+  return out;
+}
+
+/**
+ * Each transistor and rating is reported once per run: a coil kicks at every
+ * edge, and the console needs to hear it once. A thermal rating (the
+ * continuous current, the power) is reported once the circuit has stayed
+ * past it for BURN_DELAY_MS, as a resistor burns: the electronic load's
+ * power-on state, 1.65 A until setup() writes the DAC, lasts milliseconds.
+ * A transistor is not destroyed: a real one over a rating may survive (an
+ * avalanche-rated MOSFET absorbs a small coil's energy), or fail later, and
+ * the sketch keeps running.
+ */
+const reportedTransistor = new Set<string>();
+/** When a thermal finding was first seen, by part and rule (wall ms). */
+const transistorOverSince = new Map<string, number>();
+let transistorRecheck: ReturnType<typeof setTimeout> | null = null;
+
+/** Look again once a thermal finding has had time to count as sustained:
+ *  a circuit that sits still publishes nothing more. */
+function recheckTransistorsLater(): void {
+  if (transistorRecheck !== null) return;
+  transistorRecheck = setTimeout(() => {
+    transistorRecheck = null;
+    checkTransistors();
+  }, BURN_DELAY_MS + 50);
+}
+
+function checkTransistors(): void {
+  const { components } = useSimulatorStore.getState();
+  const el = useElectricalStore.getState();
+  if (!components?.length) return;
+  const found = transistorStressFindings(components as ComponentLike[], el.pinNetMap, el);
+  const now = Date.now();
+  const thermal = new Set<string>();
+  for (const { componentId, finding } of found) {
+    const key = `${componentId}:${finding.rule}`;
+    if (reportedTransistor.has(key)) continue;
+    if (finding.sustained) {
+      thermal.add(key);
+      const since = transistorOverSince.get(key);
+      if (since === undefined) transistorOverSince.set(key, now);
+      if (since === undefined || now - since < BURN_DELAY_MS) {
+        recheckTransistorsLater();
+        continue;
+      }
+    }
+    reportedTransistor.add(key);
+    console.warn(`[transistor] ${finding.message}`);
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+      try {
+        window.dispatchEvent(
+          new CustomEvent('velxio-circuit-fault', {
+            detail: { componentId, kind: 'transistor-overstress', message: finding.message, severity: 'warning' },
+          }),
+        );
+      } catch {
+        /* CustomEvent unavailable — the console.warn is enough */
+      }
+    }
+  }
+  // A thermal finding the circuit has left starts its clock again.
+  for (const key of [...transistorOverSince.keys()]) if (!thermal.has(key)) transistorOverSince.delete(key);
+}
+
 function check(): void {
+  checkPinCurrents();
+  checkTransistors();
   const sim = useSimulatorStore.getState();
-  const { nodeVoltages, pinNetMap } = useElectricalStore.getState();
+  const { nodeVoltages, pinNetMap, timeWaveforms, window } = useElectricalStore.getState();
   const now = Date.now();
   for (const comp of sim.components) {
     if (sim.burntComponents.has(comp.id)) continue;
-    const stress = componentStress(comp as ComponentLike, nodeVoltages, pinNetMap);
+    const stress = componentStress(comp as ComponentLike, nodeVoltages, pinNetMap, { timeWaveforms, window });
     if (!stress) {
       overSinceByComponent.delete(comp.id);
       continue;
@@ -179,11 +401,19 @@ export function installRuntimeBurnoutMonitor(): void {
     if (s.hexEpoch !== lastHexEpoch) {
       lastHexEpoch = s.hexEpoch;
       overSinceByComponent.clear();
+      reportedPinCurrent.clear();
+      reportedTransistor.clear();
+      transistorOverSince.clear();
     }
   });
   // Re-check on every fresh solve (the store publishes a new object each solve).
   useElectricalStore.subscribe((state, prev) => {
-    if (state.nodeVoltages !== prev.nodeVoltages || state.timeWaveforms !== prev.timeWaveforms) {
+    if (
+      state.nodeVoltages !== prev.nodeVoltages ||
+      state.timeWaveforms !== prev.timeWaveforms ||
+      state.stepWaveforms !== prev.stepWaveforms ||
+      state.window !== prev.window
+    ) {
       check();
     }
   });

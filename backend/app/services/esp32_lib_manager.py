@@ -41,6 +41,7 @@ import contextlib
 import dataclasses
 import itertools
 import json
+import math
 import time
 import logging
 import os
@@ -49,6 +50,8 @@ import subprocess
 import sys
 import threading
 from typing import Callable, Awaitable
+
+from app.services.wifi_status_parser import QEMU_STATION_IP, SerialStatusLines
 
 logger = logging.getLogger(__name__)
 
@@ -204,9 +207,25 @@ class _WorkerInstance:
     running:    bool = True
     wifi_enabled: bool = False
     wifi_hostfwd_port: int = 0
+    # UART0 for the WiFi/BLE status parser, a whole line at a time: the
+    # monitor's chunks end at every period, and an address is full of them.
+    status_lines: SerialStatusLines = dataclasses.field(default_factory=SerialStatusLines)
 
 
 # ── Manager ───────────────────────────────────────────────────────────────────
+
+
+def adc_millivolts(value) -> float | None:
+    """The pad voltage the tab sent for an ADC channel, in millivolts with its
+    fraction (a pot at 512 of 1023 is 1651.6 mV), or None for a value that is
+    no finite number. The route used to cut it to an integer, which skipped a
+    12-bit step every few millivolts (velxio/velxio-prod#171), and a value
+    that int() refuses would have ended the whole simulation session."""
+    try:
+        mv = float(value)
+    except (TypeError, ValueError):
+        return None
+    return mv if math.isfinite(mv) else None
 
 class EspLibManager:
     """
@@ -502,8 +521,9 @@ class EspLibManager:
                 'data': base64.b64encode(data).decode(),
             })
 
-    def set_adc(self, client_id: str, channel: int, millivolts: int) -> None:
-        """Set ADC channel voltage in millivolts (0-3300 mV)."""
+    def set_adc(self, client_id: str, channel: int, millivolts: float) -> None:
+        """Set ADC channel voltage in millivolts (0-3300 mV), with its
+        fraction: the worker converts the exact value (velxio/velxio-prod#171)."""
         with self._instances_lock:
             inst = self._instances.get(client_id)
         if inst and inst.running and inst.process.returncode is None:
@@ -771,8 +791,12 @@ class EspLibManager:
                             })
                             # Parse WiFi/BLE status from UART0 output
                             if uart_id == 0 and inst.wifi_enabled:
-                                from app.services.wifi_status_parser import parse_serial_text
-                                wifi_evts, ble_evts = parse_serial_text(text)
+                                # A board the gateway reaches (its host forward
+                                # targets the station) reports got_ip on a line
+                                # naming its address: the IDF logs its own
+                                # got-IP line at INFO, below the firmware's level.
+                                station = QEMU_STATION_IP if inst.wifi_hostfwd_port else None
+                                wifi_evts, ble_evts = inst.status_lines.feed(text, station)
                                 for we in wifi_evts:
                                     self._dispatch(inst, 'wifi_status', dict(we))
                                 for be in ble_evts:

@@ -263,7 +263,20 @@
       "clear": "Effacer",
       "noChannels": "Aucun canal ajouté.",
       "noChannelsHint": "Cliquez sur \"+ Ajouter un canal\" pour surveiller une broche.",
-      "removeChannel": "Supprimer {{label}}"
+      "removeChannel": "Supprimer {{label}}",
+      "probeLost": "Le point mesuré n'est plus dans le circuit",
+      "noData": "pas de données",
+      "hwBusNotDrawn": "{{controller}} {{signal}} : le moteur de cette carte ne bouge aucune broche pendant un transfert {{bus}} matériel, la trace reste donc plate même quand le bus est occupé. Un bus logiciel (bit-bang) s'affiche.",
+      "hwBusDefaultNotDrawn": "Cette broche est le {{controller}} {{signal}} par défaut de la carte. Si le sketch l'utilise pour le {{bus}} matériel (Wire, SPI), les transferts ne sont pas tracés : le moteur de cette carte ne bouge aucune broche pendant ceux-ci, la trace reste donc plate même quand le bus est occupé. Un bus logiciel (bit-bang) s'affiche.",
+      "voltsDiv": "V/div :",
+      "vChannelTitle": "Canal analogique réglé par V/div, décalage et couplage",
+      "voltsDivTitle": "Volts par division. Auto ajuste chaque capture ; une valeur fixe l'échelle.",
+      "auto": "Auto",
+      "offset": "Décalage :",
+      "offsetTitle": "Tension au centre de la ligne. Une valeur saisie ici fixe l'échelle.",
+      "couplingTitle": "Couplage : DC montre le signal avec sa polarisation, AC retire la moyenne pour montrer une petite ondulation sur une polarisation",
+      "triggerLevel": "Niveau :",
+      "triggerLevelTitle": "Tension que le canal de déclenchement analogique doit franchir. Vide : le milieu de chaque capture."
     },
     "componentProps": {
       "close": "Fermer",

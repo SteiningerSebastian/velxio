@@ -19,17 +19,28 @@ import { analogScopeWantsTransient } from './analogScopeFeed';
 import type { BoardKind } from '../../types/board';
 import { boardPinGroupFor } from './boardPinGroups';
 import { parseValueWithUnits } from './valueParser';
-import { PASSIVE_PRESETS, periodicSourceHz } from './componentToSpice';
+import { PASSIVE_PRESETS, partSettleS, periodicSourceHz } from './componentToSpice';
 
-// Minimum transient stop time so RC/decoupling networks reach steady-state
-// even if the source is very high frequency.
+// Shortest transient window, for a very high-frequency source.
 const MIN_TRAN_STOP_S = 5e-3;
-// Cap transient stop time to keep solve cost bounded for very low-frequency
-// sources (e.g. 0.1 Hz → 40 s would be absurd). 400 ms covers 20 cycles at
-// 50 Hz and gives plenty of time to reach steady state for filter networks.
+// The step-response window's cap (an MCU pin into a capacitor or an
+// inductor). That transient starts from the operating point the pin already
+// holds, so a longer one would show nothing more (velxio/velxio-prod#153).
 const MAX_TRAN_STOP_S = 0.4;
+// A periodic source's window is bounded in steps, not seconds. A single
+// source's four periods are 80 steps whatever its frequency (the step is a
+// twentieth of a period), so a 0.5 Hz generator gets its 8 s; what costs is a
+// slow source next to a much faster one, whose step is the fast one's. 8000
+// is what the old 0.4 s cap left a 1 kHz source (velxio/velxio-prod#107).
+// These are plain steps, a twentieth of the fastest period: a deck that can
+// resonate integrates up to five times finer over the same window
+// (RESONANT_SAMPLES_PER_PERIOD), so its four periods are up to 400 steps and
+// its window up to 40 000.
+const MAX_WINDOW_STEPS = 8000;
 const SAMPLES_PER_PERIOD = 20;
-const PERIODS_TO_SETTLE = 4;
+// Periods of the slowest periodic source in the stored window. The circuit's
+// start-up runs before it (settleTime.ts), so these are its steady state.
+const PERIODS_SHOWN = 4;
 
 // Transient forced by an analog scope channel on an otherwise-DC circuit.
 // Short and coarse on purpose: it exists to give the trace a live window, and
@@ -46,6 +57,23 @@ const STEP_RESPONSE_STEP_S = 1e-4;
 // Default τ when no resistor is found in the circuit (capacitor charging
 // through a 10 kΩ pull-up is a reasonable default).
 const DEFAULT_R_OHMS = 10e3;
+
+// A circuit with an inductor and a capacitor can resonate, and ngspice's
+// trapezoidal rule shifts frequencies like the bilinear transform: at a
+// step of T/20 a series RLC with f0 = 5033 Hz (10 Ω, 1 mH, 1 µF) resonated
+// at about 4991 Hz, and a sweep of the generator peaked at 4965-4995 Hz
+// (velxio/velxio-prod#121). At T/100 the shift is 0.03 % (f0 θ/tan θ with
+// θ = π/100). The finer step stays at least MIN_TRAN_STOP_S /
+// RESONANT_MAX_STEPS (1 µs), so a fast source's shortest window holds no more
+// than that many of them, and the step is never coarser than the plain one
+// (SAMPLES_PER_PERIOD): above 50 kHz the plain step is already under 1 µs and
+// is kept. The finer step is the integration's only. The window's budget
+// (MAX_WINDOW_STEPS) and the start-up's (settleTime.ts) count plain steps
+// (`budgetStep`), so they last as long as any other deck's: counted in the
+// finer step they shrank fivefold in time, and a 50 Hz generator next to a
+// 5 kHz RLC was read over 16 ms, less than one of its periods.
+const RESONANT_SAMPLES_PER_PERIOD = 100;
+const RESONANT_MAX_STEPS = 5000;
 
 // Build the meta-id sets dynamically by combining the canonical IDs with
 // every PASSIVE_PRESETS alias that maps to the same base — so adding a new
@@ -69,6 +97,26 @@ const RESISTOR_META = new Set([
   'analog-resistor',
   ...presetsOf('resistor'),
 ]);
+
+/**
+ * The steps of a transient driven by periodic sources whose fastest is at
+ * `maxFreq`: `plain`, SAMPLES_PER_PERIOD to its period, which the budgets of
+ * steps count in, and `step`, the one the deck integrates at: the plain one,
+ * or RESONANT_SAMPLES_PER_PERIOD when the circuit holds an inductor and a
+ * capacitor and can resonate (see RESONANT_SAMPLES_PER_PERIOD).
+ */
+function periodicSteps(
+  components: StoreSnapshot['components'],
+  maxFreq: number,
+): { step: number; plain: number } {
+  const plain = 1 / (maxFreq * SAMPLES_PER_PERIOD);
+  const resonant =
+    components.some((c) => INDUCTOR_META.has(c.metadataId)) &&
+    components.some((c) => CAPACITOR_META.has(c.metadataId));
+  if (!resonant) return { step: plain, plain };
+  const fine = 1 / (maxFreq * RESONANT_SAMPLES_PER_PERIOD);
+  return { step: Math.min(plain, Math.max(fine, MIN_TRAN_STOP_S / RESONANT_MAX_STEPS)), plain };
+}
 
 /** True if any board has at least one actively-driven pin (digital or PWM). */
 function hasDrivenPin(boards: StoreSnapshot['boards']): boolean {
@@ -114,7 +162,8 @@ function estimateLargestTau(components: StoreSnapshot['components']): number {
  *      generator that is not on DC, a power supply in AC mode)
  *   2. Any capacitor or inductor wired to an MCU pin that's actively driving
  *      (digital HIGH or PWM) — step-response circuits like RC charging from
- *      a `digitalWrite(HIGH)` or PWM-charged caps
+ *      a `digitalWrite(HIGH)` or PWM-charged caps — or a part that stores
+ *      energy in its own cards (partSettleS: a DC motor)
  */
 function pickDynamicAnalysis(
   components: StoreSnapshot['components'],
@@ -131,9 +180,18 @@ function pickDynamicAnalysis(
   if (frequencies.length > 0) {
     const maxFreq = Math.max(...frequencies);
     const minFreq = Math.min(...frequencies);
-    const stepS = 1 / (maxFreq * SAMPLES_PER_PERIOD);
-    const rawStop = PERIODS_TO_SETTLE / minFreq;
-    const stopS = Math.min(MAX_TRAN_STOP_S, Math.max(MIN_TRAN_STOP_S, rawStop));
+    const { step: stepS, plain: plainStepS } = periodicSteps(components, maxFreq);
+    const periodS = 1 / minFreq;
+    // Four periods of the slowest source. A window the step budget cannot
+    // hold keeps the whole periods that fit (the meters read whole periods),
+    // or the budget when not even one does.
+    let stopS = PERIODS_SHOWN * periodS;
+    const maxS = MAX_WINDOW_STEPS * plainStepS;
+    if (stopS > maxS) {
+      const whole = Math.floor(maxS / periodS + 1e-9);
+      stopS = whole >= 1 ? whole * periodS : maxS;
+    }
+    stopS = Math.max(MIN_TRAN_STOP_S, stopS);
     return {
       kind: 'tran',
       step: stepS.toExponential(3),
@@ -141,6 +199,12 @@ function pickDynamicAnalysis(
       // Meters average over whole periods of the slowest source (readSpan).
       period: 1 / minFreq,
       timeVarying: true,
+      // The window above is what is stored; the netlist builder runs the
+      // circuit's start-up before it, sized from its time constants
+      // (settleTime.ts, velxio/velxio-prod#143).
+      settle: true,
+      // A resonant deck's start-up budget counts plain steps too.
+      ...(stepS < plainStepS ? { budgetStep: plainStepS.toExponential(3) } : {}),
     };
   }
 
@@ -148,14 +212,24 @@ function pickDynamicAnalysis(
   const hasReactive = components.some(
     (c) => CAPACITOR_META.has(c.metadataId) || INDUCTOR_META.has(c.metadataId),
   );
-  if (hasReactive && hasDrivenPin(boards)) {
-    const tau = estimateLargestTau(components);
+  // A part that stores energy in its own cards (a DC motor's winding and
+  // shaft) is one too, and says how long it settles (partSettleS).
+  let partSettle = 0;
+  for (const c of components) partSettle = Math.max(partSettle, partSettleS(c) ?? 0);
+  if ((hasReactive || partSettle > 0) && hasDrivenPin(boards)) {
+    const tau = hasReactive ? estimateLargestTau(components) : 0;
     const rawStop = tau > 0 ? 5 * tau : MIN_TRAN_STOP_S;
     const stopS = Math.min(MAX_TRAN_STOP_S, Math.max(MIN_TRAN_STOP_S, rawStop));
     return {
       kind: 'tran',
       step: STEP_RESPONSE_STEP_S.toExponential(3),
+      // The deck's own window, which a rebuild runs from the operating point,
+      // is sized by the canvas's capacitors and inductors; a settling part
+      // only lengthens the step it runs from a pad edge (velxio/velxio-prod
+      // #164): a motor's shaft would cost every rebuild a 0.4 s capture that
+      // stays flat.
       stop: stopS.toExponential(3),
+      settleS: Math.max(MIN_TRAN_STOP_S, rawStop, partSettle),
     };
   }
 
@@ -205,6 +279,8 @@ export function buildInputFromStore(snap: StoreSnapshot): BuildNetlistInput {
       auxPinNames: group.aux?.pins,
       auxVolts: group.aux?.volts,
       powerInputs: group.powerInputs,
+      pinLoads: group.pinLoads,
+      pinOutputOhms: group.pinDrive?.ohms,
     };
   });
 

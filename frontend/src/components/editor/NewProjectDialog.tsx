@@ -30,6 +30,7 @@ import {
 import { useSimulatorStore, DEFAULT_BOARD_POSITION } from '../../store/useSimulatorStore';
 import { useProjectStore } from '../../store/useProjectStore';
 import { useEditorStore } from '../../store/useEditorStore';
+import { useOscilloscopeStore } from '../../store/useOscilloscopeStore';
 import { getLocaleFromPath, localizedPath } from '../../i18n/path';
 import { loadExample } from '../../utils/loadExample';
 import type { ExampleProject } from '../../data/examples';
@@ -48,7 +49,7 @@ const BOARD_BLURBS: Record<string, string> = {
   'arduino-mega': '8-bit AVR, 256KB flash, 54 digital I/O',
   'arduino-nano': '8-bit AVR, 32KB flash, breadboard-size Uno',
   'arduino-nano-esp32': 'ESP32-S3 in the Nano footprint, WiFi+BT (QEMU)',
-  esp32: 'Xtensa LX6 dual-core, WiFi+BT, 38 GPIO (QEMU)',
+  esp32: 'Xtensa LX6 dual-core, WiFi+BT, 34 GPIO (QEMU)',
   'esp32-cam': 'ESP32 + OV2640 camera, streams to LCD (QEMU)',
   'xiao-esp32-s3': 'Seeed XIAO tiny form, 8MB flash+PSRAM (QEMU)',
   'xiao-esp32-c3': 'Seeed XIAO ESP32-C3 mini board (QEMU)',
@@ -114,6 +115,9 @@ export function clearWorkspaceForStarter(): void {
   sim.boards.map((b) => b.id).forEach((id) => sim.removeBoard(id));
   sim.setComponents([]);
   sim.setWires([]);
+  // An empty canvas has nothing for the old scope channels to watch
+  // (velxio/velxio-prod#119).
+  useOscilloscopeStore.getState().resetChannels();
   const editor = useEditorStore.getState();
   Object.keys(editor.fileGroups).forEach((g) => editor.deleteFileGroup(g));
   editor.setActiveGroup('');

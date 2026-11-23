@@ -9,11 +9,9 @@ D_aqi-pmled aqi-pmled_sense_mid 0 LED_RED
 R_autopull_n0 n0 0 100Meg
 R_autopull_n1 n1 0 100Meg
 R_autopull_n2 n2 0 100Meg
-R_autopull_n3 n3 0 100Meg
 R_autopull_n4 n4 0 100Meg
 R_autopull_n5 n5 0 100Meg
 R_autopull_n6 n6 0 100Meg
-R_autopull_n7 n7 0 100Meg
 .model LED_RED D(Is=1e-20 N=1.7)
 .op
 .end"
@@ -27,8 +25,6 @@ R_night-ldr_pull vcc_rail n1 10000
 R_night-r1 n0 n2 220
 V_night-led1_sense n2 night-led1_sense_mid DC 0
 D_night-led1 night-led1_sense_mid 0 LED_YELLOW
-R_autopull_n0 n0 0 100Meg
-R_autopull_n2 n2 0 100Meg
 .model LED_YELLOW D(Is=1e-21 N=1.8)
 .op
 .end"
@@ -60,7 +56,8 @@ exports[`netlist snapshot — 100-days (49 examples) > 100d-blynk-based-iot-rela
 "* Velxio circuit
 R_pblynk-rly_coil n1 pblynk-rly_coilmid 1000
 L_pblynk-rly_coil pblynk-rly_coilmid n3 20m
-S_pblynk-rly_no n0 n4 n1 n3 RELAY_SW
+B_pblynk-rly_coilv pblynk-rly_coilv 0 V = V(n1) - V(pblynk-rly_coilmid)
+S_pblynk-rly_no n0 n4 pblynk-rly_coilv 0 RELAY_NO_3p3
 D_pblynk-rly_fly n3 n1 D1N4148
 R_pblynk-rlamp n4 n2 220
 V_pblynk-lamp_sense n2 pblynk-lamp_sense_mid DC 0
@@ -70,7 +67,7 @@ R_autopull_n1 n1 0 100Meg
 R_autopull_n2 n2 0 100Meg
 R_autopull_n3 n3 0 100Meg
 R_autopull_n4 n4 0 100Meg
-.model RELAY_SW SW(Vt=1.98 Vh=0.495 Ron=0.05 Roff=1G)
+.model RELAY_NO_3p3 SW(Vt=1.98 Vh=0.495 Ron=0.05 Roff=1G)
 .model D1N4148 D(Is=2.52n Rs=.568 N=1.752 Cjo=4p M=.4 tt=20n Bv=100 Ibv=0.1u)
 .model LED_RED D(Is=1e-20 N=1.7)
 .op
@@ -81,7 +78,8 @@ exports[`netlist snapshot — 100-days (49 examples) > 100d-blynk-controlled-dc-
 "* Velxio circuit
 R_fan-rly_coil n0 fan-rly_coilmid 1000
 L_fan-rly_coil fan-rly_coilmid n3 20m
-S_fan-rly_no n1 n4 n0 n3 RELAY_SW
+B_fan-rly_coilv fan-rly_coilv 0 V = V(n0) - V(fan-rly_coilmid)
+S_fan-rly_no n1 n4 fan-rly_coilv 0 RELAY_NO_3p3
 D_fan-rly_fly n3 n0 D1N4148
 R_fan-rlamp n4 n2 220
 V_fan-lamp_sense n2 fan-lamp_sense_mid DC 0
@@ -91,7 +89,7 @@ R_autopull_n1 n1 0 100Meg
 R_autopull_n2 n2 0 100Meg
 R_autopull_n3 n3 0 100Meg
 R_autopull_n4 n4 0 100Meg
-.model RELAY_SW SW(Vt=1.98 Vh=0.495 Ron=0.05 Roff=1G)
+.model RELAY_NO_3p3 SW(Vt=1.98 Vh=0.495 Ron=0.05 Roff=1G)
 .model D1N4148 D(Is=2.52n Rs=.568 N=1.752 Cjo=4p M=.4 tt=20n Bv=100 Ibv=0.1u)
 .model LED_BLUE D(Is=1e-28 N=2.0)
 .op
@@ -156,8 +154,6 @@ R_dim-pot1_bot n1 0 5004.88758553
 R_dim-r1 n0 n2 220
 V_dim-led1_sense n2 dim-led1_sense_mid DC 0
 D_dim-led1 dim-led1_sense_mid 0 LED_YELLOW
-R_autopull_n0 n0 0 100Meg
-R_autopull_n2 n2 0 100Meg
 .model LED_YELLOW D(Is=1e-21 N=1.8)
 .op
 .end"
@@ -230,8 +226,10 @@ exports[`netlist snapshot — 100-days (49 examples) > 100d-esp32-oled-smart-ui-
 V_VCC_RAIL vcc_rail 0 DC 5
 R_eyes-btn-next_sw n0 vcc_rail 1000000000
 R_eyes-btn-sel_sw n3 vcc_rail 1000000000
+R_autopull_n0 n0 0 100Meg
 R_autopull_n1 n1 0 100Meg
 R_autopull_n2 n2 0 100Meg
+R_autopull_n3 n3 0 100Meg
 .op
 .end"
 `;
@@ -276,12 +274,6 @@ D_dsm-led2 dsm-led2_sense_mid 0 LED_ORANGE
 R_dsm-r3 n0 n8 220
 V_dsm-led3_sense n8 dsm-led3_sense_mid DC 0
 D_dsm-led3 dsm-led3_sense_mid 0 LED_BLUE
-R_autopull_n0 n0 0 100Meg
-R_autopull_n1 n1 0 100Meg
-R_autopull_n2 n2 0 100Meg
-R_autopull_n6 n6 0 100Meg
-R_autopull_n7 n7 0 100Meg
-R_autopull_n8 n8 0 100Meg
 .model LED_RED D(Is=1e-20 N=1.7)
 .model LED_ORANGE D(Is=1e-21 N=1.75)
 .model LED_BLUE D(Is=1e-28 N=2.0)
@@ -301,7 +293,8 @@ exports[`netlist snapshot — 100-days (49 examples) > 100d-iot-relay-control-we
 "* Velxio circuit
 R_prelay-rly_coil n0 prelay-rly_coilmid 1000
 L_prelay-rly_coil prelay-rly_coilmid n3 20m
-S_prelay-rly_no n0 n4 n0 n3 RELAY_SW
+B_prelay-rly_coilv prelay-rly_coilv 0 V = V(n0) - V(prelay-rly_coilmid)
+S_prelay-rly_no n0 n4 prelay-rly_coilv 0 RELAY_NO_3p3
 D_prelay-rly_fly n3 n0 D1N4148
 R_prelay-rlamp n4 n2 220
 V_prelay-lamp_sense n2 prelay-lamp_sense_mid DC 0
@@ -311,7 +304,7 @@ R_autopull_n1 n1 0 100Meg
 R_autopull_n2 n2 0 100Meg
 R_autopull_n3 n3 0 100Meg
 R_autopull_n4 n4 0 100Meg
-.model RELAY_SW SW(Vt=1.98 Vh=0.495 Ron=0.05 Roff=1G)
+.model RELAY_NO_3p3 SW(Vt=1.98 Vh=0.495 Ron=0.05 Roff=1G)
 .model D1N4148 D(Is=2.52n Rs=.568 N=1.752 Cjo=4p M=.4 tt=20n Bv=100 Ibv=0.1u)
 .model LED_RED D(Is=1e-20 N=1.7)
 .op
@@ -325,12 +318,13 @@ R_irr-pot1_top vcc_rail n1 7067.44868035
 R_irr-pot1_bot n1 0 2932.55131965
 R_irr-rly_coil n0 irr-rly_coilmid 1000
 L_irr-rly_coil irr-rly_coilmid 0 20m
-S_irr-rly_no vcc_rail n3 n0 0 RELAY_SW
+B_irr-rly_coilv irr-rly_coilv 0 V = V(n0) - V(irr-rly_coilmid)
+S_irr-rly_no vcc_rail n3 irr-rly_coilv 0 RELAY_NO_3p3
 D_irr-rly_fly 0 n0 D1N4148
 R_irr-rlamp n3 n2 220
 V_irr-lamp_sense n2 irr-lamp_sense_mid DC 0
 D_irr-lamp irr-lamp_sense_mid 0 LED_BLUE
-.model RELAY_SW SW(Vt=1.98 Vh=0.495 Ron=0.05 Roff=1G)
+.model RELAY_NO_3p3 SW(Vt=1.98 Vh=0.495 Ron=0.05 Roff=1G)
 .model D1N4148 D(Is=2.52n Rs=.568 N=1.752 Cjo=4p M=.4 tt=20n Bv=100 Ibv=0.1u)
 .model LED_BLUE D(Is=1e-28 N=2.0)
 .op
@@ -430,10 +424,6 @@ R_autopull_n6 n6 0 100Meg
 R_autopull_n7 n7 0 100Meg
 R_autopull_n8 n8 0 100Meg
 R_autopull_n9 n9 0 100Meg
-R_autopull_n10 n10 0 100Meg
-R_autopull_n11 n11 0 100Meg
-R_autopull_n12 n12 0 100Meg
-R_autopull_n13 n13 0 100Meg
 .model LED_GREEN D(Is=1e-22 N=1.9)
 .model LED_RED D(Is=1e-20 N=1.7)
 .op
@@ -475,9 +465,7 @@ V_VCC_RAIL vcc_rail 0 DC 5
 R_ppir-r1 n0 n2 220
 V_ppir-led1_sense n2 ppir-led1_sense_mid DC 0
 D_ppir-led1 ppir-led1_sense_mid 0 LED_RED
-R_autopull_n0 n0 0 100Meg
 R_autopull_n1 n1 0 100Meg
-R_autopull_n2 n2 0 100Meg
 .model LED_RED D(Is=1e-20 N=1.7)
 .op
 .end"
@@ -523,6 +511,12 @@ R_autopull_n0 n0 0 100Meg
 exports[`netlist snapshot — 100-days (49 examples) > 100d-rgb-color-mixer-using-potentiometers-esp32-plus-micropython 1`] = `
 "* Velxio circuit
 V_VCC_RAIL vcc_rail 0 DC 5
+V_rgb-led_r_sense n6 rgb-led_r_mid DC 0
+D_rgb-led_r rgb-led_r_mid 0 LED_RGB_RED
+V_rgb-led_g_sense n7 rgb-led_g_mid DC 0
+D_rgb-led_g rgb-led_g_mid 0 LED_RGB_GREEN
+V_rgb-led_b_sense n8 rgb-led_b_mid DC 0
+D_rgb-led_b rgb-led_b_mid 0 LED_RGB_BLUE
 R_rgb-r0 n0 n6 220
 R_rgb-r1 n1 n7 220
 R_rgb-r2 n2 n8 220
@@ -532,12 +526,9 @@ R_rgb-pot2_top vcc_rail n4 4995.11241447
 R_rgb-pot2_bot n4 0 5004.88758553
 R_rgb-pot3_top vcc_rail n5 4995.11241447
 R_rgb-pot3_bot n5 0 5004.88758553
-R_autopull_n0 n0 0 100Meg
-R_autopull_n1 n1 0 100Meg
-R_autopull_n2 n2 0 100Meg
-R_autopull_n6 n6 0 100Meg
-R_autopull_n7 n7 0 100Meg
-R_autopull_n8 n8 0 100Meg
+.model LED_RGB_RED D(Is=3.5e-22 N=1.7)
+.model LED_RGB_GREEN D(Is=1e-28 N=2.043)
+.model LED_RGB_BLUE D(Is=1e-28 N=2.043)
 .op
 .end"
 `;
@@ -580,14 +571,6 @@ R_home-r0 n2 n5 220
 V_home-led0_sense n5 home-led0_sense_mid DC 0
 D_home-led0 home-led0_sense_mid 0 LED_YELLOW
 R_autopull_n0 n0 0 100Meg
-R_autopull_n1 n1 0 100Meg
-R_autopull_n2 n2 0 100Meg
-R_autopull_n3 n3 0 100Meg
-R_autopull_n4 n4 0 100Meg
-R_autopull_n5 n5 0 100Meg
-R_autopull_n6 n6 0 100Meg
-R_autopull_n7 n7 0 100Meg
-R_autopull_n8 n8 0 100Meg
 .model LED_RED D(Is=1e-20 N=1.7)
 .model LED_GREEN D(Is=1e-22 N=1.9)
 .model LED_BLUE D(Is=1e-28 N=2.0)
@@ -645,13 +628,7 @@ D_tled-led2 tled-led2_sense_mid 0 LED_YELLOW
 R_tled-r3 n2 n6 220
 V_tled-led3_sense n6 tled-led3_sense_mid DC 0
 D_tled-led3 tled-led3_sense_mid 0 LED_RED
-R_autopull_n0 n0 0 100Meg
-R_autopull_n1 n1 0 100Meg
-R_autopull_n2 n2 0 100Meg
 R_autopull_n3 n3 0 100Meg
-R_autopull_n4 n4 0 100Meg
-R_autopull_n5 n5 0 100Meg
-R_autopull_n6 n6 0 100Meg
 .model LED_GREEN D(Is=1e-22 N=1.9)
 .model LED_YELLOW D(Is=1e-21 N=1.8)
 .model LED_RED D(Is=1e-20 N=1.7)
@@ -668,11 +645,7 @@ D_usd-led1 usd-led1_sense_mid 0 LED_GREEN
 R_usd-r2 n1 n4 220
 V_usd-led2_sense n4 usd-led2_sense_mid DC 0
 D_usd-led2 usd-led2_sense_mid 0 LED_RED
-R_autopull_n0 n0 0 100Meg
-R_autopull_n1 n1 0 100Meg
 R_autopull_n2 n2 0 100Meg
-R_autopull_n3 n3 0 100Meg
-R_autopull_n4 n4 0 100Meg
 R_autopull_n5 n5 0 100Meg
 .model LED_GREEN D(Is=1e-22 N=1.9)
 .model LED_RED D(Is=1e-20 N=1.7)
@@ -717,9 +690,18 @@ R_rb2 n1 0 10000
 R_rc n4 n2 4700
 R_re n0 0 1000
 C_cin n3 n1 0.00001 IC=0
-Q_q1 n2 n1 n0 Q2N2222
+V_q1_c n2 q1_ci DC 0
+V_q1_b n1 q1_bi DC 0
+Q_q1 q1_ci q1_bi n0 Q2N2222
+X_q1_bv q1_ci n0 BJT_CEO_BV_40
 R_vm_vmR n2 0 10Meg
-.model Q2N2222 NPN(IS=1E-14 VAF=100 BF=200 IKF=0.3 XTB=1.5 BR=3 CJC=8E-12 CJE=25E-12 TR=100E-9 TF=400E-12 ITF=1 VTF=2 XTF=3 RB=10 RC=.3 RE=.2)
+.model Q2N2222 NPN(IS=1E-14 VAF=100 BF=200 IKF=0.3 ISE=2.5E-13 NE=1.588 XTB=1.5 BR=3 CJC=8E-12 CJE=25E-12 TR=100E-9 TF=400E-12 ITF=1 VTF=2 XTF=3 RB=10 RC=.3 RE=.2)
+.subckt BJT_CEO_BV_40 hi lo
+D_bv mid hi DBV
+D_bk mid lo DBK
+.model DBV D(Is=1e-14 BV=40 IBV=1m)
+.model DBK D(Is=1e-14)
+.ends BJT_CEO_BV_40
 * voltmeter probe: read v(n2) - v(0)
 .tran 5.000e-5 5.000e-3
 .end"
@@ -732,11 +714,23 @@ V_in1 n0 0 SIN(2.5 0.02 1000)
 V_in2 n1 0 DC 2.5
 R_rc1 n5 n3 4700
 R_rc2 n5 n4 4700
-Q_q1 n3 n0 n2 Q2N2222
-Q_q2 n4 n1 n2 Q2N2222
+V_q1_c n3 q1_ci DC 0
+V_q1_b n0 q1_bi DC 0
+Q_q1 q1_ci q1_bi n2 Q2N2222
+X_q1_bv q1_ci n2 BJT_CEO_BV_40
+V_q2_c n4 q2_ci DC 0
+V_q2_b n1 q2_bi DC 0
+Q_q2 q2_ci q2_bi n2 Q2N2222
+X_q2_bv q2_ci n2 BJT_CEO_BV_40
 R_rtail n2 0 4700
 R_vm_vmR n4 0 10Meg
-.model Q2N2222 NPN(IS=1E-14 VAF=100 BF=200 IKF=0.3 XTB=1.5 BR=3 CJC=8E-12 CJE=25E-12 TR=100E-9 TF=400E-12 ITF=1 VTF=2 XTF=3 RB=10 RC=.3 RE=.2)
+.model Q2N2222 NPN(IS=1E-14 VAF=100 BF=200 IKF=0.3 ISE=2.5E-13 NE=1.588 XTB=1.5 BR=3 CJC=8E-12 CJE=25E-12 TR=100E-9 TF=400E-12 ITF=1 VTF=2 XTF=3 RB=10 RC=.3 RE=.2)
+.subckt BJT_CEO_BV_40 hi lo
+D_bv mid hi DBV
+D_bk mid lo DBK
+.model DBV D(Is=1e-14 BV=40 IBV=1m)
+.model DBK D(Is=1e-14)
+.ends BJT_CEO_BV_40
 * voltmeter probe: read v(n4) - v(0)
 .tran 5.000e-5 5.000e-3
 .end"
@@ -746,11 +740,20 @@ exports[`netlist snapshot — analog (30 examples) > an-bjt-emitter-follower 1`]
 "* Velxio circuit
 V_vcc n3 0 DC 12
 V_src n2 0 SIN(6 1 1000)
-R_rb n2 n1 100000
-Q_q1 n3 n1 n0 Q2N2222
+R_rb n2 n1 1000
+V_q1_c n3 q1_ci DC 0
+V_q1_b n1 q1_bi DC 0
+Q_q1 q1_ci q1_bi n0 Q2N2222
+X_q1_bv q1_ci n0 BJT_CEO_BV_40
 R_re n0 0 1000
 R_vm_vmR n0 0 10Meg
-.model Q2N2222 NPN(IS=1E-14 VAF=100 BF=200 IKF=0.3 XTB=1.5 BR=3 CJC=8E-12 CJE=25E-12 TR=100E-9 TF=400E-12 ITF=1 VTF=2 XTF=3 RB=10 RC=.3 RE=.2)
+.model Q2N2222 NPN(IS=1E-14 VAF=100 BF=200 IKF=0.3 ISE=2.5E-13 NE=1.588 XTB=1.5 BR=3 CJC=8E-12 CJE=25E-12 TR=100E-9 TF=400E-12 ITF=1 VTF=2 XTF=3 RB=10 RC=.3 RE=.2)
+.subckt BJT_CEO_BV_40 hi lo
+D_bv mid hi DBV
+D_bk mid lo DBK
+.model DBV D(Is=1e-14 BV=40 IBV=1m)
+.model DBK D(Is=1e-14)
+.ends BJT_CEO_BV_40
 * voltmeter probe: read v(n0) - v(0)
 .tran 5.000e-5 5.000e-3
 .end"
@@ -759,12 +762,21 @@ R_vm_vmR n0 0 10Meg
 exports[`netlist snapshot — analog (30 examples) > an-bjt-switch 1`] = `
 "* Velxio circuit
 V_vcc n3 0 DC 9
-V_src n2 0 PULSE(0 4 0 1n 1n 0.005 0.01)
+V_src n2 0 PULSE(0 4 0 1n 1n 0.004999999 0.01)
 R_rb n2 n0 4700
 R_rl n3 n1 1000
-Q_q1 n1 n0 0 Q2N2222
+V_q1_c n1 q1_ci DC 0
+V_q1_b n0 q1_bi DC 0
+Q_q1 q1_ci q1_bi 0 Q2N2222
+X_q1_bv q1_ci 0 BJT_CEO_BV_40
 R_vm_vmR n1 0 10Meg
-.model Q2N2222 NPN(IS=1E-14 VAF=100 BF=200 IKF=0.3 XTB=1.5 BR=3 CJC=8E-12 CJE=25E-12 TR=100E-9 TF=400E-12 ITF=1 VTF=2 XTF=3 RB=10 RC=.3 RE=.2)
+.model Q2N2222 NPN(IS=1E-14 VAF=100 BF=200 IKF=0.3 ISE=2.5E-13 NE=1.588 XTB=1.5 BR=3 CJC=8E-12 CJE=25E-12 TR=100E-9 TF=400E-12 ITF=1 VTF=2 XTF=3 RB=10 RC=.3 RE=.2)
+.subckt BJT_CEO_BV_40 hi lo
+D_bv mid hi DBV
+D_bk mid lo DBK
+.model DBV D(Is=1e-14 BV=40 IBV=1m)
+.model DBK D(Is=1e-14)
+.ends BJT_CEO_BV_40
 * voltmeter probe: read v(n1) - v(0)
 .tran 5.000e-4 4.000e-2
 .end"
@@ -779,9 +791,7 @@ D_d3 n1 n2 D1N4007
 D_d4 n1 0 D1N4007
 R_r1 n0 n1 2200
 R_vm_vmR n0 n1 10Meg
-R_autopull_n0 n0 0 100Meg
-R_autopull_n1 n1 0 100Meg
-.model D1N4007 D(Is=76.9n N=1.45 Rs=0.0342 Ikf=2.34 Bv=1000 Ibv=5u)
+.model D1N4007 D(Is=14.3733n N=1.80829 Rs=0.0414712 Eg=1.11 Xti=3 Cjo=28.119p Vj=0.700053 M=0.346714 Fc=0.5 Bv=1100 Ibv=10)
 * voltmeter probe: read v(n0) - v(n1)
 .tran 1.000e-3 8.000e-2
 .end"
@@ -791,13 +801,24 @@ exports[`netlist snapshot — analog (30 examples) > an-current-mirror 1`] = `
 "* Velxio circuit
 V_vcc n3 0 DC 12
 R_rref n3 n2 10000
-Q_q1 n2 n2 0 Q2N2222
-Q_q2 n0 n2 0 Q2N2222
+V_q1_c n2 q1_ci DC 0
+V_q1_b n2 q1_bi DC 0
+Q_q1 q1_ci q1_bi 0 Q2N2222
+X_q1_bv q1_ci 0 BJT_CEO_BV_40
+V_q2_c n0 q2_ci DC 0
+V_q2_b n2 q2_bi DC 0
+Q_q2 q2_ci q2_bi 0 Q2N2222
+X_q2_bv q2_ci 0 BJT_CEO_BV_40
 R_rload n3 n1 4700
 V_am_sense n1 amm_am_mid DC 0
 R_am_shunt amm_am_mid n0 1m
-R_autopull_n0 n0 0 100Meg
-.model Q2N2222 NPN(IS=1E-14 VAF=100 BF=200 IKF=0.3 XTB=1.5 BR=3 CJC=8E-12 CJE=25E-12 TR=100E-9 TF=400E-12 ITF=1 VTF=2 XTF=3 RB=10 RC=.3 RE=.2)
+.model Q2N2222 NPN(IS=1E-14 VAF=100 BF=200 IKF=0.3 ISE=2.5E-13 NE=1.588 XTB=1.5 BR=3 CJC=8E-12 CJE=25E-12 TR=100E-9 TF=400E-12 ITF=1 VTF=2 XTF=3 RB=10 RC=.3 RE=.2)
+.subckt BJT_CEO_BV_40 hi lo
+D_bv mid hi DBV
+D_bk mid lo DBK
+.model DBV D(Is=1e-14 BV=40 IBV=1m)
+.model DBK D(Is=1e-14)
+.ends BJT_CEO_BV_40
 * ammeter probe: read i(v_am_sense)
 .op
 .end"
@@ -808,12 +829,23 @@ exports[`netlist snapshot — analog (30 examples) > an-darlington 1`] = `
 V_vcc n4 0 DC 12
 V_src n3 0 DC 2
 R_rb n3 n1 10000
-Q_q1 n2 n1 n0 Q2N2222
-Q_q2 n2 n0 0 Q2N2222
+V_q1_c n2 q1_ci DC 0
+V_q1_b n1 q1_bi DC 0
+Q_q1 q1_ci q1_bi n0 Q2N2222
+X_q1_bv q1_ci n0 BJT_CEO_BV_40
+V_q2_c n2 q2_ci DC 0
+V_q2_b n0 q2_bi DC 0
+Q_q2 q2_ci q2_bi 0 Q2N2222
+X_q2_bv q2_ci 0 BJT_CEO_BV_40
 R_rl n4 n2 220
 R_vm_vmR n2 0 10Meg
-R_autopull_n0 n0 0 100Meg
-.model Q2N2222 NPN(IS=1E-14 VAF=100 BF=200 IKF=0.3 XTB=1.5 BR=3 CJC=8E-12 CJE=25E-12 TR=100E-9 TF=400E-12 ITF=1 VTF=2 XTF=3 RB=10 RC=.3 RE=.2)
+.model Q2N2222 NPN(IS=1E-14 VAF=100 BF=200 IKF=0.3 ISE=2.5E-13 NE=1.588 XTB=1.5 BR=3 CJC=8E-12 CJE=25E-12 TR=100E-9 TF=400E-12 ITF=1 VTF=2 XTF=3 RB=10 RC=.3 RE=.2)
+.subckt BJT_CEO_BV_40 hi lo
+D_bv mid hi DBV
+D_bk mid lo DBK
+.model DBV D(Is=1e-14 BV=40 IBV=1m)
+.model DBK D(Is=1e-14)
+.ends BJT_CEO_BV_40
 * voltmeter probe: read v(n2) - v(0)
 .op
 .end"
@@ -826,9 +858,9 @@ C_c1 n1 n0 0.000001 IC=0
 D_d1 0 n0 D1N4007
 R_rl n0 0 10000
 R_vm_vmR n0 0 10Meg
-.model D1N4007 D(Is=76.9n N=1.45 Rs=0.0342 Ikf=2.34 Bv=1000 Ibv=5u)
+.model D1N4007 D(Is=14.3733n N=1.80829 Rs=0.0414712 Eg=1.11 Xti=3 Cjo=28.119p Vj=0.700053 M=0.346714 Fc=0.5 Bv=1100 Ibv=10)
 * voltmeter probe: read v(n0) - v(0)
-.tran 5.000e-5 5.000e-3
+.tran 2.500e-5 7.500000e-2 7.000000e-2
 .end"
 `;
 
@@ -839,7 +871,7 @@ R_r1 n1 n0 1000
 D_d1 n0 0 D1N4007
 D_d2 0 n0 D1N4007
 R_vm_vmR n0 0 10Meg
-.model D1N4007 D(Is=76.9n N=1.45 Rs=0.0342 Ikf=2.34 Bv=1000 Ibv=5u)
+.model D1N4007 D(Is=14.3733n N=1.80829 Rs=0.0414712 Eg=1.11 Xti=3 Cjo=28.119p Vj=0.700053 M=0.346714 Fc=0.5 Bv=1100 Ibv=10)
 * voltmeter probe: read v(n0) - v(0)
 .tran 5.000e-5 5.000e-3
 .end"
@@ -851,7 +883,7 @@ V_src n1 0 SIN(0 8 50)
 D_d1 n1 n0 D1N4007
 R_r1 n0 0 1000
 R_vm_vmR n0 0 10Meg
-.model D1N4007 D(Is=76.9n N=1.45 Rs=0.0342 Ikf=2.34 Bv=1000 Ibv=5u)
+.model D1N4007 D(Is=14.3733n N=1.80829 Rs=0.0414712 Eg=1.11 Xti=3 Cjo=28.119p Vj=0.700053 M=0.346714 Fc=0.5 Bv=1100 Ibv=10)
 * voltmeter probe: read v(n0) - v(0)
 .tran 1.000e-3 8.000e-2
 .end"
@@ -863,12 +895,13 @@ V_vcc n4 0 DC 12
 V_src n3 0 SIN(0 0.1 1000)
 R_rg1 n4 n2 1000000
 R_rg2 n2 0 470000
-R_rd n4 n1 4700
+R_rd n4 n1 2200
 R_rs n0 0 1000
 C_cin n3 n2 0.00001 IC=0
-M_m1 n1 n2 n0 M2N7000
+V_m1_d n1 m1_di DC 0
+M_m1 m1_di n2 n0 M2N7000
 R_vm_vmR n1 0 10Meg
-.model M2N7000 VDMOS(Rg=3 Vto=1.6 Rd=0 Rs=.75 Rb=.14 Kp=.17 mtriode=1.25 Cgdmax=80p Cgdmin=12p Cgs=50p Cjo=50p Is=.04p Vds=60 Ron=2 Qg=1.5n)
+.model M2N7000 VDMOS(Rg=3 Vto=1.6 Rd=0 Rs=.75 Rb=.14 Kp=.17 mtriode=1.25 Cgdmax=80p Cgdmin=12p Cgs=50p Cjo=50p Is=.04p BV=60 Vds=60 Ron=2 Qg=1.5n)
 * voltmeter probe: read v(n1) - v(0)
 .tran 5.000e-5 5.000e-3
 .end"
@@ -877,27 +910,29 @@ R_vm_vmR n1 0 10Meg
 exports[`netlist snapshot — analog (30 examples) > an-mosfet-pmos-highside 1`] = `
 "* Velxio circuit
 V_vcc n3 0 DC 12
-V_ctrl n0 0 PULSE(0 12 0 1n 1n 0.1 0.2)
+V_ctrl n0 0 PULSE(0 12 0 1n 1n 0.099999999 0.2)
 R_rg n0 n2 1000
-M_m1 n1 n2 n3 MIRF9540
+V_m1_d n1 m1_di DC 0
+M_m1 m1_di n2 n3 MIRF9540
 R_rl n1 0 220
 R_vm_vmR n1 0 10Meg
-.model MIRF9540 VDMOS(pchan Rg=3 Vto=-3.5 Rd=.15 Rs=.15 Rb=.15 Kp=8 lambda=.01 mtriode=.5 Cgdmax=1.5n Cgdmin=.07n Cgs=1n Cjo=1n Is=38p Vds=-200 Ron=.5 Qg=44n)
+.model MIRF9540 VDMOS(pchan Rg=3 Vto=-3.5 Rd=.15 Rs=.15 Rb=.15 Kp=8 lambda=.01 mtriode=.5 Cgdmax=1.5n Cgdmin=.07n Cgs=1n Cjo=1n Is=38p BV=100 Vds=-100 Ron=.5 Qg=44n)
 * voltmeter probe: read v(n1) - v(0)
-.tran 1.000e-2 4.000e-1
+.tran 1.000e-2 8.000e-1
 .end"
 `;
 
 exports[`netlist snapshot — analog (30 examples) > an-mosfet-switch 1`] = `
 "* Velxio circuit
 V_vcc n3 0 DC 12
-V_src n2 0 PULSE(0 4 0 1n 1n 0.005 0.01)
+V_src n2 0 PULSE(0 4 0 1n 1n 0.004999999 0.01)
 R_rg n2 n0 100
 R_rl n3 n1 470
-M_m1 n1 n0 0 M2N7000
+V_m1_d n1 m1_di DC 0
+M_m1 m1_di n0 0 M2N7000
 R_rgp n0 0 100000
 R_vm_vmR n1 0 10Meg
-.model M2N7000 VDMOS(Rg=3 Vto=1.6 Rd=0 Rs=.75 Rb=.14 Kp=.17 mtriode=1.25 Cgdmax=80p Cgdmin=12p Cgs=50p Cjo=50p Is=.04p Vds=60 Ron=2 Qg=1.5n)
+.model M2N7000 VDMOS(Rg=3 Vto=1.6 Rd=0 Rs=.75 Rb=.14 Kp=.17 mtriode=1.25 Cgdmax=80p Cgdmin=12p Cgs=50p Cjo=50p Is=.04p BV=60 Vds=60 Ron=2 Qg=1.5n)
 * voltmeter probe: read v(n1) - v(0)
 .tran 5.000e-4 4.000e-2
 .end"
@@ -913,8 +948,8 @@ R_rl n1 0 10000
 R_vm_vmR n1 0 10Meg
 .SUBCKT LM358 1 2 99 50 28
 IOS 2 1 5N
-R1 1 3 500K
-R2 3 2 500K
+R1 1 3 50MEG
+R2 3 2 50MEG
 I1 99 4 100U
 R3 5 50 517
 R4 6 50 517
@@ -927,8 +962,8 @@ R8 99 49 60K
 R9 49 50 60K
 V2 99 8 1.63
 D1 9 8 DX_LM358
-D2 10 9 DX_LM358
-V3 10 50 .635
+D2 10 9 DX2_LM358
+V3 10 50 .169
 EH 99 98 99 49 1
 G1 98 9 POLY(1) 5 6 0 9.8772E-4 0 .3459
 R5 98 9 101.2433MEG
@@ -939,7 +974,7 @@ C5 98 15 7.9577E-14
 G4 98 16 3 49 5.6234E-8
 L2 98 17 15.9M
 R13 17 16 1K
-F6 50 99 POLY(1) V6 300U 1
+F6 50 99 POLY(1) V6 0 1
 E1 99 23 99 15 1
 R16 24 23 17.5
 D5 26 24 DX_LM358
@@ -954,6 +989,7 @@ D3 15 20 DX_LM358
 L3 22 28 500P
 RL3 22 28 100K
 .MODEL DX_LM358 D(IS=1E-15)
+.MODEL DX2_LM358 D(IS=1E-15 N=0.25)
 .MODEL QX_LM358 PNP(BF=1.111E3)
 .ENDS LM358
 * voltmeter probe: read v(n1) - v(0)
@@ -970,8 +1006,8 @@ R_rl n1 0 1000
 R_vm_vmR n1 0 10Meg
 .SUBCKT LM358 1 2 99 50 28
 IOS 2 1 5N
-R1 1 3 500K
-R2 3 2 500K
+R1 1 3 50MEG
+R2 3 2 50MEG
 I1 99 4 100U
 R3 5 50 517
 R4 6 50 517
@@ -984,8 +1020,8 @@ R8 99 49 60K
 R9 49 50 60K
 V2 99 8 1.63
 D1 9 8 DX_LM358
-D2 10 9 DX_LM358
-V3 10 50 .635
+D2 10 9 DX2_LM358
+V3 10 50 .169
 EH 99 98 99 49 1
 G1 98 9 POLY(1) 5 6 0 9.8772E-4 0 .3459
 R5 98 9 101.2433MEG
@@ -996,7 +1032,7 @@ C5 98 15 7.9577E-14
 G4 98 16 3 49 5.6234E-8
 L2 98 17 15.9M
 R13 17 16 1K
-F6 50 99 POLY(1) V6 300U 1
+F6 50 99 POLY(1) V6 0 1
 E1 99 23 99 15 1
 R16 24 23 17.5
 D5 26 24 DX_LM358
@@ -1011,6 +1047,7 @@ D3 15 20 DX_LM358
 L3 22 28 500P
 RL3 22 28 100K
 .MODEL DX_LM358 D(IS=1E-15)
+.MODEL DX2_LM358 D(IS=1E-15 N=0.25)
 .MODEL QX_LM358 PNP(BF=1.111E3)
 .ENDS LM358
 * voltmeter probe: read v(n1) - v(0)
@@ -1021,16 +1058,17 @@ RL3 22 28 100K
 exports[`netlist snapshot — analog (30 examples) > an-opamp-integrator 1`] = `
 "* Velxio circuit
 V_VCC_RAIL vcc_rail 0 DC 5
-V_src n2 0 PULSE(1.5 3.5 0 1n 1n 0.0025 0.005)
+V_src n2 0 PULSE(1.5 2.5 0 1n 1n 0.002499999 0.005)
 R_rin n2 n1 10000
 C_cf n1 n0 1e-7 IC=0
+R_rfb n1 n0 22000
 X_u1 n3 n1 vcc_rail 0 n0 LM358
-V_vref n3 0 DC 2.5
+V_vref n3 0 DC 2
 R_vm_vmR n0 0 10Meg
 .SUBCKT LM358 1 2 99 50 28
 IOS 2 1 5N
-R1 1 3 500K
-R2 3 2 500K
+R1 1 3 50MEG
+R2 3 2 50MEG
 I1 99 4 100U
 R3 5 50 517
 R4 6 50 517
@@ -1043,8 +1081,8 @@ R8 99 49 60K
 R9 49 50 60K
 V2 99 8 1.63
 D1 9 8 DX_LM358
-D2 10 9 DX_LM358
-V3 10 50 .635
+D2 10 9 DX2_LM358
+V3 10 50 .169
 EH 99 98 99 49 1
 G1 98 9 POLY(1) 5 6 0 9.8772E-4 0 .3459
 R5 98 9 101.2433MEG
@@ -1055,7 +1093,7 @@ C5 98 15 7.9577E-14
 G4 98 16 3 49 5.6234E-8
 L2 98 17 15.9M
 R13 17 16 1K
-F6 50 99 POLY(1) V6 300U 1
+F6 50 99 POLY(1) V6 0 1
 E1 99 23 99 15 1
 R16 24 23 17.5
 D5 26 24 DX_LM358
@@ -1070,26 +1108,27 @@ D3 15 20 DX_LM358
 L3 22 28 500P
 RL3 22 28 100K
 .MODEL DX_LM358 D(IS=1E-15)
+.MODEL DX2_LM358 D(IS=1E-15 N=0.25)
 .MODEL QX_LM358 PNP(BF=1.111E3)
 .ENDS LM358
 * voltmeter probe: read v(n0) - v(0)
-.tran 2.500e-4 2.000e-2
+.tran 2.500e-4 4.500000e-2 2.500000e-2
 .end"
 `;
 
 exports[`netlist snapshot — analog (30 examples) > an-opamp-inverting 1`] = `
 "* Velxio circuit
 V_VCC_RAIL vcc_rail 0 DC 5
-V_src n2 0 SIN(2.5 0.2 500)
+V_src n2 0 SIN(2 0.1 500)
 R_rin n2 n1 1000
 R_rf n1 n0 10000
 X_u1 n3 n1 vcc_rail 0 n0 LM358
-V_vref n3 0 DC 2.5
+V_vref n3 0 DC 2
 R_vm_vmR n0 0 10Meg
 .SUBCKT LM358 1 2 99 50 28
 IOS 2 1 5N
-R1 1 3 500K
-R2 3 2 500K
+R1 1 3 50MEG
+R2 3 2 50MEG
 I1 99 4 100U
 R3 5 50 517
 R4 6 50 517
@@ -1102,8 +1141,8 @@ R8 99 49 60K
 R9 49 50 60K
 V2 99 8 1.63
 D1 9 8 DX_LM358
-D2 10 9 DX_LM358
-V3 10 50 .635
+D2 10 9 DX2_LM358
+V3 10 50 .169
 EH 99 98 99 49 1
 G1 98 9 POLY(1) 5 6 0 9.8772E-4 0 .3459
 R5 98 9 101.2433MEG
@@ -1114,7 +1153,7 @@ C5 98 15 7.9577E-14
 G4 98 16 3 49 5.6234E-8
 L2 98 17 15.9M
 R13 17 16 1K
-F6 50 99 POLY(1) V6 300U 1
+F6 50 99 POLY(1) V6 0 1
 E1 99 23 99 15 1
 R16 24 23 17.5
 D5 26 24 DX_LM358
@@ -1129,6 +1168,7 @@ D3 15 20 DX_LM358
 L3 22 28 500P
 RL3 22 28 100K
 .MODEL DX_LM358 D(IS=1E-15)
+.MODEL DX2_LM358 D(IS=1E-15 N=0.25)
 .MODEL QX_LM358 PNP(BF=1.111E3)
 .ENDS LM358
 * voltmeter probe: read v(n0) - v(0)
@@ -1139,15 +1179,15 @@ RL3 22 28 100K
 exports[`netlist snapshot — analog (30 examples) > an-opamp-non-inverting 1`] = `
 "* Velxio circuit
 V_VCC_RAIL vcc_rail 0 DC 5
-V_src n1 0 SIN(2.5 0.1 500)
+V_src n1 0 SIN(0.2 0.1 500)
 X_u1 n1 n0 vcc_rail 0 n2 LM358
 R_rf n2 n0 10000
 R_rg n0 0 1000
 R_vm_vmR n2 0 10Meg
 .SUBCKT LM358 1 2 99 50 28
 IOS 2 1 5N
-R1 1 3 500K
-R2 3 2 500K
+R1 1 3 50MEG
+R2 3 2 50MEG
 I1 99 4 100U
 R3 5 50 517
 R4 6 50 517
@@ -1160,8 +1200,8 @@ R8 99 49 60K
 R9 49 50 60K
 V2 99 8 1.63
 D1 9 8 DX_LM358
-D2 10 9 DX_LM358
-V3 10 50 .635
+D2 10 9 DX2_LM358
+V3 10 50 .169
 EH 99 98 99 49 1
 G1 98 9 POLY(1) 5 6 0 9.8772E-4 0 .3459
 R5 98 9 101.2433MEG
@@ -1172,7 +1212,7 @@ C5 98 15 7.9577E-14
 G4 98 16 3 49 5.6234E-8
 L2 98 17 15.9M
 R13 17 16 1K
-F6 50 99 POLY(1) V6 300U 1
+F6 50 99 POLY(1) V6 0 1
 E1 99 23 99 15 1
 R16 24 23 17.5
 D5 26 24 DX_LM358
@@ -1187,6 +1227,7 @@ D3 15 20 DX_LM358
 L3 22 28 500P
 RL3 22 28 100K
 .MODEL DX_LM358 D(IS=1E-15)
+.MODEL DX2_LM358 D(IS=1E-15 N=0.25)
 .MODEL QX_LM358 PNP(BF=1.111E3)
 .ENDS LM358
 * voltmeter probe: read v(n2) - v(0)
@@ -1197,18 +1238,18 @@ RL3 22 28 100K
 exports[`netlist snapshot — analog (30 examples) > an-opamp-summing 1`] = `
 "* Velxio circuit
 V_VCC_RAIL vcc_rail 0 DC 5
-V_v1 n2 0 DC 1
-V_v2 n3 0 DC 2
+V_v1 n2 0 DC 1.5
+V_v2 n3 0 DC 1.7
 R_r1 n2 n0 10000
 R_r2 n3 n0 10000
 R_rf n0 n1 10000
 X_u1 n4 n0 vcc_rail 0 n1 LM358
-V_vref n4 0 DC 2.5
+V_vref n4 0 DC 2
 R_vm_vmR n1 0 10Meg
 .SUBCKT LM358 1 2 99 50 28
 IOS 2 1 5N
-R1 1 3 500K
-R2 3 2 500K
+R1 1 3 50MEG
+R2 3 2 50MEG
 I1 99 4 100U
 R3 5 50 517
 R4 6 50 517
@@ -1221,8 +1262,8 @@ R8 99 49 60K
 R9 49 50 60K
 V2 99 8 1.63
 D1 9 8 DX_LM358
-D2 10 9 DX_LM358
-V3 10 50 .635
+D2 10 9 DX2_LM358
+V3 10 50 .169
 EH 99 98 99 49 1
 G1 98 9 POLY(1) 5 6 0 9.8772E-4 0 .3459
 R5 98 9 101.2433MEG
@@ -1233,7 +1274,7 @@ C5 98 15 7.9577E-14
 G4 98 16 3 49 5.6234E-8
 L2 98 17 15.9M
 R13 17 16 1K
-F6 50 99 POLY(1) V6 300U 1
+F6 50 99 POLY(1) V6 0 1
 E1 99 23 99 15 1
 R16 24 23 17.5
 D5 26 24 DX_LM358
@@ -1248,6 +1289,7 @@ D3 15 20 DX_LM358
 L3 22 28 500P
 RL3 22 28 100K
 .MODEL DX_LM358 D(IS=1E-15)
+.MODEL DX2_LM358 D(IS=1E-15 N=0.25)
 .MODEL QX_LM358 PNP(BF=1.111E3)
 .ENDS LM358
 * voltmeter probe: read v(n1) - v(0)
@@ -1309,7 +1351,7 @@ L_l1 n1 n0 0.001
 C_c1 n0 0 0.000001 IC=0
 R_vm_vmR n0 0 10Meg
 * voltmeter probe: read v(n0) - v(0)
-.tran 1.000e-5 5.000e-3
+.tran 2.000e-6 5.000e-3
 .end"
 `;
 
@@ -1324,8 +1366,8 @@ R_r2 n2 n0 10000
 R_vm_vmR n2 0 10Meg
 .SUBCKT LM358 1 2 99 50 28
 IOS 2 1 5N
-R1 1 3 500K
-R2 3 2 500K
+R1 1 3 50MEG
+R2 3 2 50MEG
 I1 99 4 100U
 R3 5 50 517
 R4 6 50 517
@@ -1338,8 +1380,8 @@ R8 99 49 60K
 R9 49 50 60K
 V2 99 8 1.63
 D1 9 8 DX_LM358
-D2 10 9 DX_LM358
-V3 10 50 .635
+D2 10 9 DX2_LM358
+V3 10 50 .169
 EH 99 98 99 49 1
 G1 98 9 POLY(1) 5 6 0 9.8772E-4 0 .3459
 R5 98 9 101.2433MEG
@@ -1350,7 +1392,7 @@ C5 98 15 7.9577E-14
 G4 98 16 3 49 5.6234E-8
 L2 98 17 15.9M
 R13 17 16 1K
-F6 50 99 POLY(1) V6 300U 1
+F6 50 99 POLY(1) V6 0 1
 E1 99 23 99 15 1
 R16 24 23 17.5
 D5 26 24 DX_LM358
@@ -1365,6 +1407,7 @@ D3 15 20 DX_LM358
 L3 22 28 500P
 RL3 22 28 100K
 .MODEL DX_LM358 D(IS=1E-15)
+.MODEL DX2_LM358 D(IS=1E-15 N=0.25)
 .MODEL QX_LM358 PNP(BF=1.111E3)
 .ENDS LM358
 * voltmeter probe: read v(n2) - v(0)
@@ -1392,9 +1435,9 @@ D_d1 n1 n0 D1N4007
 C_c1 n0 0 0.0001 IC=0
 R_r1 n0 0 1000
 R_vm_vmR n0 0 10Meg
-.model D1N4007 D(Is=76.9n N=1.45 Rs=0.0342 Ikf=2.34 Bv=1000 Ibv=5u)
+.model D1N4007 D(Is=14.3733n N=1.80829 Rs=0.0414712 Eg=1.11 Xti=3 Cjo=28.119p Vj=0.700053 M=0.346714 Fc=0.5 Bv=1100 Ibv=10)
 * voltmeter probe: read v(n0) - v(0)
-.tran 1.000e-3 8.000e-2
+.tran 5.000e-4 7.800000e-1 7.000000e-1
 .end"
 `;
 
@@ -1418,10 +1461,9 @@ D_d2 n0 n1 D1N4007
 C_c2 n1 0 0.0001 IC=0
 R_rl n1 0 10000
 R_vm_vmR n1 0 10Meg
-R_autopull_n0 n0 0 100Meg
-.model D1N4007 D(Is=76.9n N=1.45 Rs=0.0342 Ikf=2.34 Bv=1000 Ibv=5u)
+.model D1N4007 D(Is=14.3733n N=1.80829 Rs=0.0414712 Eg=1.11 Xti=3 Cjo=28.119p Vj=0.700053 M=0.346714 Fc=0.5 Bv=1100 Ibv=10)
 * voltmeter probe: read v(n1) - v(0)
-.tran 1.000e-3 8.000e-2
+.tran 5.000e-4 7.080000e+0 7.000000e+0
 .end"
 `;
 
@@ -1432,7 +1474,7 @@ R_r1 n1 n0 220
 D_d1 0 n0 D1N4733
 R_rl n0 0 2200
 R_vm_vmR n0 0 10Meg
-.model D1N4733 D(Is=1n N=1 Rs=5 Bv=5.1 Ibv=50m)
+.model D1N4733 D(Is=50f N=1 Rs=2 Bv=5.002 Ibv=49m)
 * voltmeter probe: read v(n0) - v(0)
 .op
 .end"
@@ -1505,11 +1547,20 @@ R_rb1 n0 n2 47000
 R_rb2 n2 0 15000
 R_rc n0 n3 4700
 R_re n1 0 1000
-Q_q1 n3 n2 n1 Q2N2222
+V_q1_c n3 q1_ci DC 0
+V_q1_b n2 q1_bi DC 0
+Q_q1 q1_ci q1_bi n1 Q2N2222
+X_q1_bv q1_ci n1 BJT_CEO_BV_40
 V_sg1 n4 0 SIN(0 0.05 1000)
 C_cin n4 n2 0.000001 IC=0
-.model Q2N2222 NPN(IS=1E-14 VAF=100 BF=200 IKF=0.3 XTB=1.5 BR=3 CJC=8E-12 CJE=25E-12 TR=100E-9 TF=400E-12 ITF=1 VTF=2 XTF=3 RB=10 RC=.3 RE=.2)
-.tran 5.000e-5 5.000e-3
+.model Q2N2222 NPN(IS=1E-14 VAF=100 BF=200 IKF=0.3 ISE=2.5E-13 NE=1.588 XTB=1.5 BR=3 CJC=8E-12 CJE=25E-12 TR=100E-9 TF=400E-12 ITF=1 VTF=2 XTF=3 RB=10 RC=.3 RE=.2)
+.subckt BJT_CEO_BV_40 hi lo
+D_bv mid hi DBV
+D_bk mid lo DBK
+.model DBV D(Is=1e-14 BV=40 IBV=1m)
+.model DBK D(Is=1e-14)
+.ends BJT_CEO_BV_40
+.tran 5.000e-5 8.500000e-2 8.000000e-2
 .end"
 `;
 
@@ -1530,8 +1581,14 @@ R_rb n1 n5 10000
 R_rl n0 n6 220
 V_led1_sense n6 led1_sense_mid DC 0
 D_led1 led1_sense_mid n2 LED_RED
-Q_q1 n2 n5 n3 Q2N2222
-Q_q2 n2 n3 n4 Q2N2222
+V_q1_c n2 q1_ci DC 0
+V_q1_b n5 q1_bi DC 0
+Q_q1 q1_ci q1_bi n3 Q2N2222
+X_q1_bv q1_ci n3 BJT_CEO_BV_40
+V_q2_c n2 q2_ci DC 0
+V_q2_b n3 q2_bi DC 0
+Q_q2 q2_ci q2_bi n4 Q2N2222
+X_q2_bv q2_ci n4 BJT_CEO_BV_40
 R_autopull_n0 n0 0 100Meg
 R_autopull_n1 n1 0 100Meg
 R_autopull_n2 n2 0 100Meg
@@ -1540,7 +1597,13 @@ R_autopull_n4 n4 0 100Meg
 R_autopull_n5 n5 0 100Meg
 R_autopull_n6 n6 0 100Meg
 .model LED_RED D(Is=1e-20 N=1.7)
-.model Q2N2222 NPN(IS=1E-14 VAF=100 BF=200 IKF=0.3 XTB=1.5 BR=3 CJC=8E-12 CJE=25E-12 TR=100E-9 TF=400E-12 ITF=1 VTF=2 XTF=3 RB=10 RC=.3 RE=.2)
+.model Q2N2222 NPN(IS=1E-14 VAF=100 BF=200 IKF=0.3 ISE=2.5E-13 NE=1.588 XTB=1.5 BR=3 CJC=8E-12 CJE=25E-12 TR=100E-9 TF=400E-12 ITF=1 VTF=2 XTF=3 RB=10 RC=.3 RE=.2)
+.subckt BJT_CEO_BV_40 hi lo
+D_bv mid hi DBV
+D_bk mid lo DBK
+.model DBV D(Is=1e-14 BV=40 IBV=1m)
+.model DBK D(Is=1e-14)
+.ends BJT_CEO_BV_40
 .op
 .end"
 `;
@@ -1550,7 +1613,7 @@ exports[`netlist snapshot — circuits (41 examples) > diode-rectifier 1`] = `
 V_sg1 n1 0 SIN(0 5 50)
 D_d1 n1 n0 D1N4007
 R_rl n0 0 1000
-.model D1N4007 D(Is=76.9n N=1.45 Rs=0.0342 Ikf=2.34 Bv=1000 Ibv=5u)
+.model D1N4007 D(Is=14.3733n N=1.80829 Rs=0.0414712 Eg=1.11 Xti=3 Cjo=28.119p Vj=0.700053 M=0.346714 Fc=0.5 Bv=1100 Ibv=10)
 .tran 1.000e-3 8.000e-2
 .end"
 `;
@@ -1568,6 +1631,12 @@ R_pot2_bot n1 0 1
 
 exports[`netlist snapshot — circuits (41 examples) > esp32-pwm-led-rgb 1`] = `
 "* Velxio circuit
+V_rgb_r_sense n6 rgb_r_mid DC 0
+D_rgb_r rgb_r_mid n5 LED_RGB_RED
+V_rgb_g_sense n4 rgb_g_mid DC 0
+D_rgb_g rgb_g_mid n5 LED_RGB_GREEN
+V_rgb_b_sense n3 rgb_b_mid DC 0
+D_rgb_b rgb_b_mid n5 LED_RGB_BLUE
 R_rr n0 n6 220
 R_rg n1 n4 220
 R_rb n2 n3 220
@@ -1578,6 +1647,9 @@ R_autopull_n3 n3 0 100Meg
 R_autopull_n4 n4 0 100Meg
 R_autopull_n5 n5 0 100Meg
 R_autopull_n6 n6 0 100Meg
+.model LED_RGB_RED D(Is=3.5e-22 N=1.7)
+.model LED_RGB_GREEN D(Is=1e-28 N=2.043)
+.model LED_RGB_BLUE D(Is=1e-28 N=2.043)
 .op
 .end"
 `;
@@ -1609,15 +1681,30 @@ R_autopull_n7 n7 0 100Meg
 
 exports[`netlist snapshot — circuits (41 examples) > l293d-motor-control 1`] = `
 "* Velxio circuit
-B_u1_ch1a n4 0 V = u(V(n3)-2.5) * u(V(n1)-2.5) * V(n0)
-R_u1_ch1a_load n4 0 10Meg
-B_u1_ch1b n5 0 V = u(V(n3)-2.5) * u(V(n2)-2.5) * V(n0)
-R_u1_ch1b_load n5 0 10Meg
-R_rm n4 n5 5
-R_autopull_n0 n0 0 100Meg
+B_u1_o1_src u1_o1_srcc 0 V = u(V(n3)-1.9) * u(V(n1)-1.9)
+B_u1_o1_snk u1_o1_snkc 0 V = u(V(n3)-1.9) * (1 - u(V(n1)-1.9))
+S_u1_o1_src n0 u1_o1_src u1_o1_srcc 0 L293D_SW
+D_u1_o1_src u1_o1_src n4 L293D_SRC
+D_u1_o1_clamph n4 n0 L293D_CLAMP
+S_u1_o1_snk n4 u1_o1_snk u1_o1_snkc 0 L293D_SW
+D_u1_o1_snk u1_o1_snk 0 L293D_SNK
+D_u1_o1_clampl 0 n4 L293D_CLAMP
+B_u1_o2_src u1_o2_srcc 0 V = u(V(n3)-1.9) * u(V(n2)-1.9)
+B_u1_o2_snk u1_o2_snkc 0 V = u(V(n3)-1.9) * (1 - u(V(n2)-1.9))
+S_u1_o2_src n0 u1_o2_src u1_o2_srcc 0 L293D_SW
+D_u1_o2_src u1_o2_src n5 L293D_SRC
+D_u1_o2_clamph n5 n0 L293D_CLAMP
+S_u1_o2_snk n5 u1_o2_snk u1_o2_snkc 0 L293D_SW
+D_u1_o2_snk u1_o2_snk 0 L293D_SNK
+D_u1_o2_clampl 0 n5 L293D_CLAMP
+R_rm n4 n5 56
 R_autopull_n1 n1 0 100Meg
 R_autopull_n2 n2 0 100Meg
 R_autopull_n3 n3 0 100Meg
+.model L293D_SW SW(Vt=0.5 Vh=0.1 Ron=0.01 Roff=1G)
+.model L293D_SRC D(Is=1.35e-11 N=2 Rs=0.22)
+.model L293D_SNK D(Is=6.5e-10 N=2 Rs=0.22)
+.model L293D_CLAMP D(Is=1e-12 N=1 Rs=1)
 .op
 .end"
 `;
@@ -1627,14 +1714,30 @@ exports[`netlist snapshot — circuits (41 examples) > l293d-speed-pwm 1`] = `
 V_VCC_RAIL vcc_rail 0 DC 5
 R_pot_top vcc_rail n3 10000
 R_pot_bot n3 0 1
-B_u1_ch1a n4 0 V = u(V(n2)-2.5) * u(V(n0)-2.5) * V(vcc_rail)
-R_u1_ch1a_load n4 0 10Meg
-B_u1_ch1b n5 0 V = u(V(n2)-2.5) * u(V(n1)-2.5) * V(vcc_rail)
-R_u1_ch1b_load n5 0 10Meg
-R_rm n4 n5 5
+B_u1_o1_src u1_o1_srcc 0 V = u(V(n2)-1.9) * u(V(n0)-1.9)
+B_u1_o1_snk u1_o1_snkc 0 V = u(V(n2)-1.9) * (1 - u(V(n0)-1.9))
+S_u1_o1_src vcc_rail u1_o1_src u1_o1_srcc 0 L293D_SW
+D_u1_o1_src u1_o1_src n4 L293D_SRC
+D_u1_o1_clamph n4 vcc_rail L293D_CLAMP
+S_u1_o1_snk n4 u1_o1_snk u1_o1_snkc 0 L293D_SW
+D_u1_o1_snk u1_o1_snk 0 L293D_SNK
+D_u1_o1_clampl 0 n4 L293D_CLAMP
+B_u1_o2_src u1_o2_srcc 0 V = u(V(n2)-1.9) * u(V(n1)-1.9)
+B_u1_o2_snk u1_o2_snkc 0 V = u(V(n2)-1.9) * (1 - u(V(n1)-1.9))
+S_u1_o2_src vcc_rail u1_o2_src u1_o2_srcc 0 L293D_SW
+D_u1_o2_src u1_o2_src n5 L293D_SRC
+D_u1_o2_clamph n5 vcc_rail L293D_CLAMP
+S_u1_o2_snk n5 u1_o2_snk u1_o2_snkc 0 L293D_SW
+D_u1_o2_snk u1_o2_snk 0 L293D_SNK
+D_u1_o2_clampl 0 n5 L293D_CLAMP
+R_rm n4 n5 56
 R_autopull_n0 n0 0 100Meg
 R_autopull_n1 n1 0 100Meg
 R_autopull_n2 n2 0 100Meg
+.model L293D_SW SW(Vt=0.5 Vh=0.1 Ron=0.01 Roff=1G)
+.model L293D_SRC D(Is=1.35e-11 N=2 Rs=0.22)
+.model L293D_SNK D(Is=6.5e-10 N=2 Rs=0.22)
+.model L293D_CLAMP D(Is=1e-12 N=1 Rs=1)
 .op
 .end"
 `;
@@ -1779,17 +1882,22 @@ exports[`netlist snapshot — circuits (41 examples) > mixed-and-transistor-driv
 B_u1 n7 0 V = 5 * (0.5*(1+tanh((V(n0)-2.5)/0.05))) * (0.5*(1+tanh((V(n2)-2.5)/0.05)))
 R_u1_load n7 0 1Meg
 R_rb n7 n5 1000
-Q_q1 n3 n5 n4 Q2N2222
+V_q1_c n3 q1_ci DC 0
+V_q1_b n5 q1_bi DC 0
+Q_q1 q1_ci q1_bi n4 Q2N2222
+X_q1_bv q1_ci n4 BJT_CEO_BV_40
 R_rl n1 n6 220
 V_motor_sense n6 motor_sense_mid DC 0
 D_motor motor_sense_mid n3 LED_GREEN
 R_autopull_n0 n0 0 100Meg
-R_autopull_n1 n1 0 100Meg
 R_autopull_n2 n2 0 100Meg
-R_autopull_n3 n3 0 100Meg
-R_autopull_n4 n4 0 100Meg
-R_autopull_n6 n6 0 100Meg
-.model Q2N2222 NPN(IS=1E-14 VAF=100 BF=200 IKF=0.3 XTB=1.5 BR=3 CJC=8E-12 CJE=25E-12 TR=100E-9 TF=400E-12 ITF=1 VTF=2 XTF=3 RB=10 RC=.3 RE=.2)
+.model Q2N2222 NPN(IS=1E-14 VAF=100 BF=200 IKF=0.3 ISE=2.5E-13 NE=1.588 XTB=1.5 BR=3 CJC=8E-12 CJE=25E-12 TR=100E-9 TF=400E-12 ITF=1 VTF=2 XTF=3 RB=10 RC=.3 RE=.2)
+.subckt BJT_CEO_BV_40 hi lo
+D_bv mid hi DBV
+D_bk mid lo DBK
+.model DBV D(Is=1e-14 BV=40 IBV=1m)
+.model DBK D(Is=1e-14)
+.ends BJT_CEO_BV_40
 .model LED_GREEN D(Is=1e-22 N=1.9)
 .op
 .end"
@@ -1800,7 +1908,8 @@ exports[`netlist snapshot — circuits (41 examples) > mosfet-pwm-led 1`] = `
 R_rl n0 n4 220
 V_led1_sense n4 led1_sense_mid DC 0
 D_led1 led1_sense_mid n2 LED_WHITE
-M_q1 n2 n1 n3 M2N7000
+V_q1_d n2 q1_di DC 0
+M_q1 q1_di n1 n3 M2N7000
 R_rg n1 n3 100000
 R_autopull_n0 n0 0 100Meg
 R_autopull_n1 n1 0 100Meg
@@ -1808,7 +1917,7 @@ R_autopull_n2 n2 0 100Meg
 R_autopull_n3 n3 0 100Meg
 R_autopull_n4 n4 0 100Meg
 .model LED_WHITE D(Is=1e-28 N=2.0)
-.model M2N7000 VDMOS(Rg=3 Vto=1.6 Rd=0 Rs=.75 Rb=.14 Kp=.17 mtriode=1.25 Cgdmax=80p Cgdmin=12p Cgs=50p Cjo=50p Is=.04p Vds=60 Ron=2 Qg=1.5n)
+.model M2N7000 VDMOS(Rg=3 Vto=1.6 Rd=0 Rs=.75 Rb=.14 Kp=.17 mtriode=1.25 Cgdmax=80p Cgdmin=12p Cgs=50p Cjo=50p Is=.04p BV=60 Vds=60 Ron=2 Qg=1.5n)
 .op
 .end"
 `;
@@ -1856,9 +1965,11 @@ R_setBtn_sw n5 n6 1000000000
 R_rstBtn_sw n4 n6 1000000000
 R_rpuS n0 n5 10000
 R_rpuR n0 n4 10000
-B_g1 n1 0 V = 5 * (1 - (0.5*(1+tanh((V(n5)-2.5)/0.05))) * (0.5*(1+tanh((V(n2)-2.5)/0.05))))
+B_g1 g1_yi 0 V = 5 * (1 - (0.5*(1+tanh((V(n5)-2.5)/0.05))) * (0.5*(1+tanh((V(n2)-2.5)/0.05))))
+R_g1_ro g1_yi n1 25
 R_g1_load n1 0 1Meg
-B_g2 n2 0 V = 5 * (1 - (0.5*(1+tanh((V(n4)-2.5)/0.05))) * (0.5*(1+tanh((V(n1)-2.5)/0.05))))
+B_g2 g2_yi 0 V = 5 * (1 - (0.5*(1+tanh((V(n4)-2.5)/0.05))) * (0.5*(1+tanh((V(n1)-2.5)/0.05))))
+R_g2_ro g2_yi n2 25
 R_g2_load n2 0 1Meg
 R_rl n1 n3 220
 V_qled_sense n3 qled_sense_mid DC 0
@@ -1866,8 +1977,8 @@ D_qled qled_sense_mid n6 LED_GREEN
 R_autopull_n0 n0 0 100Meg
 R_autopull_n4 n4 0 100Meg
 R_autopull_n5 n5 0 100Meg
-R_autopull_n6 n6 0 100Meg
 .model LED_GREEN D(Is=1e-22 N=1.9)
+.nodeset V(n1)=0 V(n2)=5
 .op
 .end"
 `;
@@ -1889,7 +2000,10 @@ R_rb n1 n4 1000
 R_rc n0 n5 220
 V_led1_sense n5 led1_sense_mid DC 0
 D_led1 led1_sense_mid n2 LED_GREEN
-Q_q1 n2 n4 n3 Q2N2222
+V_q1_c n2 q1_ci DC 0
+V_q1_b n4 q1_bi DC 0
+Q_q1 q1_ci q1_bi n3 Q2N2222
+X_q1_bv q1_ci n3 BJT_CEO_BV_40
 R_autopull_n0 n0 0 100Meg
 R_autopull_n1 n1 0 100Meg
 R_autopull_n2 n2 0 100Meg
@@ -1897,7 +2011,13 @@ R_autopull_n3 n3 0 100Meg
 R_autopull_n4 n4 0 100Meg
 R_autopull_n5 n5 0 100Meg
 .model LED_GREEN D(Is=1e-22 N=1.9)
-.model Q2N2222 NPN(IS=1E-14 VAF=100 BF=200 IKF=0.3 XTB=1.5 BR=3 CJC=8E-12 CJE=25E-12 TR=100E-9 TF=400E-12 ITF=1 VTF=2 XTF=3 RB=10 RC=.3 RE=.2)
+.model Q2N2222 NPN(IS=1E-14 VAF=100 BF=200 IKF=0.3 ISE=2.5E-13 NE=1.588 XTB=1.5 BR=3 CJC=8E-12 CJE=25E-12 TR=100E-9 TF=400E-12 ITF=1 VTF=2 XTF=3 RB=10 RC=.3 RE=.2)
+.subckt BJT_CEO_BV_40 hi lo
+D_bv mid hi DBV
+D_bk mid lo DBK
+.model DBV D(Is=1e-14 BV=40 IBV=1m)
+.model DBK D(Is=1e-14)
+.ends BJT_CEO_BV_40
 .op
 .end"
 `;
@@ -1924,8 +2044,8 @@ V_led1_sense n1 led1_sense_mid DC 0
 D_led1 led1_sense_mid 0 LED_GREEN
 .SUBCKT LM358 1 2 99 50 28
 IOS 2 1 5N
-R1 1 3 500K
-R2 3 2 500K
+R1 1 3 50MEG
+R2 3 2 50MEG
 I1 99 4 100U
 R3 5 50 517
 R4 6 50 517
@@ -1938,8 +2058,8 @@ R8 99 49 60K
 R9 49 50 60K
 V2 99 8 1.63
 D1 9 8 DX_LM358
-D2 10 9 DX_LM358
-V3 10 50 .635
+D2 10 9 DX2_LM358
+V3 10 50 .169
 EH 99 98 99 49 1
 G1 98 9 POLY(1) 5 6 0 9.8772E-4 0 .3459
 R5 98 9 101.2433MEG
@@ -1950,7 +2070,7 @@ C5 98 15 7.9577E-14
 G4 98 16 3 49 5.6234E-8
 L2 98 17 15.9M
 R13 17 16 1K
-F6 50 99 POLY(1) V6 300U 1
+F6 50 99 POLY(1) V6 0 1
 E1 99 23 99 15 1
 R16 24 23 17.5
 D5 26 24 DX_LM358
@@ -1965,6 +2085,7 @@ D3 15 20 DX_LM358
 L3 22 28 500P
 RL3 22 28 100K
 .MODEL DX_LM358 D(IS=1E-15)
+.MODEL DX2_LM358 D(IS=1E-15 N=0.25)
 .MODEL QX_LM358 PNP(BF=1.111E3)
 .ENDS LM358
 .model LED_GREEN D(Is=1e-22 N=1.9)
@@ -1986,8 +2107,8 @@ R_pot2_top vcc_rail n1 10000
 R_pot2_bot n1 0 1
 .SUBCKT LM358 1 2 99 50 28
 IOS 2 1 5N
-R1 1 3 500K
-R2 3 2 500K
+R1 1 3 50MEG
+R2 3 2 50MEG
 I1 99 4 100U
 R3 5 50 517
 R4 6 50 517
@@ -2000,8 +2121,8 @@ R8 99 49 60K
 R9 49 50 60K
 V2 99 8 1.63
 D1 9 8 DX_LM358
-D2 10 9 DX_LM358
-V3 10 50 .635
+D2 10 9 DX2_LM358
+V3 10 50 .169
 EH 99 98 99 49 1
 G1 98 9 POLY(1) 5 6 0 9.8772E-4 0 .3459
 R5 98 9 101.2433MEG
@@ -2012,7 +2133,7 @@ C5 98 15 7.9577E-14
 G4 98 16 3 49 5.6234E-8
 L2 98 17 15.9M
 R13 17 16 1K
-F6 50 99 POLY(1) V6 300U 1
+F6 50 99 POLY(1) V6 0 1
 E1 99 23 99 15 1
 R16 24 23 17.5
 D5 26 24 DX_LM358
@@ -2027,6 +2148,7 @@ D3 15 20 DX_LM358
 L3 22 28 500P
 RL3 22 28 100K
 .MODEL DX_LM358 D(IS=1E-15)
+.MODEL DX2_LM358 D(IS=1E-15 N=0.25)
 .MODEL QX_LM358 PNP(BF=1.111E3)
 .ENDS LM358
 .op
@@ -2045,8 +2167,8 @@ R_rbp2 n1 0 10000
 X_u1 n1 n2 vcc_rail 0 n3 LM358
 .SUBCKT LM358 1 2 99 50 28
 IOS 2 1 5N
-R1 1 3 500K
-R2 3 2 500K
+R1 1 3 50MEG
+R2 3 2 50MEG
 I1 99 4 100U
 R3 5 50 517
 R4 6 50 517
@@ -2059,8 +2181,8 @@ R8 99 49 60K
 R9 49 50 60K
 V2 99 8 1.63
 D1 9 8 DX_LM358
-D2 10 9 DX_LM358
-V3 10 50 .635
+D2 10 9 DX2_LM358
+V3 10 50 .169
 EH 99 98 99 49 1
 G1 98 9 POLY(1) 5 6 0 9.8772E-4 0 .3459
 R5 98 9 101.2433MEG
@@ -2071,7 +2193,7 @@ C5 98 15 7.9577E-14
 G4 98 16 3 49 5.6234E-8
 L2 98 17 15.9M
 R13 17 16 1K
-F6 50 99 POLY(1) V6 300U 1
+F6 50 99 POLY(1) V6 0 1
 E1 99 23 99 15 1
 R16 24 23 17.5
 D5 26 24 DX_LM358
@@ -2086,6 +2208,7 @@ D3 15 20 DX_LM358
 L3 22 28 500P
 RL3 22 28 100K
 .MODEL DX_LM358 D(IS=1E-15)
+.MODEL DX2_LM358 D(IS=1E-15 N=0.25)
 .MODEL QX_LM358 PNP(BF=1.111E3)
 .ENDS LM358
 .op
@@ -2104,8 +2227,8 @@ R_rfb n3 n1 100000
 X_u1 n1 n0 vcc_rail 0 n3 LM358
 .SUBCKT LM358 1 2 99 50 28
 IOS 2 1 5N
-R1 1 3 500K
-R2 3 2 500K
+R1 1 3 50MEG
+R2 3 2 50MEG
 I1 99 4 100U
 R3 5 50 517
 R4 6 50 517
@@ -2118,8 +2241,8 @@ R8 99 49 60K
 R9 49 50 60K
 V2 99 8 1.63
 D1 9 8 DX_LM358
-D2 10 9 DX_LM358
-V3 10 50 .635
+D2 10 9 DX2_LM358
+V3 10 50 .169
 EH 99 98 99 49 1
 G1 98 9 POLY(1) 5 6 0 9.8772E-4 0 .3459
 R5 98 9 101.2433MEG
@@ -2130,7 +2253,7 @@ C5 98 15 7.9577E-14
 G4 98 16 3 49 5.6234E-8
 L2 98 17 15.9M
 R13 17 16 1K
-F6 50 99 POLY(1) V6 300U 1
+F6 50 99 POLY(1) V6 0 1
 E1 99 23 99 15 1
 R16 24 23 17.5
 D5 26 24 DX_LM358
@@ -2145,6 +2268,7 @@ D3 15 20 DX_LM358
 L3 22 28 500P
 RL3 22 28 100K
 .MODEL DX_LM358 D(IS=1E-15)
+.MODEL DX2_LM358 D(IS=1E-15 N=0.25)
 .MODEL QX_LM358 PNP(BF=1.111E3)
 .ENDS LM358
 .op
@@ -2159,8 +2283,8 @@ R_pot_bot n0 0 1
 X_u1 n0 n1 vcc_rail 0 n1 LM358
 .SUBCKT LM358 1 2 99 50 28
 IOS 2 1 5N
-R1 1 3 500K
-R2 3 2 500K
+R1 1 3 50MEG
+R2 3 2 50MEG
 I1 99 4 100U
 R3 5 50 517
 R4 6 50 517
@@ -2173,8 +2297,8 @@ R8 99 49 60K
 R9 49 50 60K
 V2 99 8 1.63
 D1 9 8 DX_LM358
-D2 10 9 DX_LM358
-V3 10 50 .635
+D2 10 9 DX2_LM358
+V3 10 50 .169
 EH 99 98 99 49 1
 G1 98 9 POLY(1) 5 6 0 9.8772E-4 0 .3459
 R5 98 9 101.2433MEG
@@ -2185,7 +2309,7 @@ C5 98 15 7.9577E-14
 G4 98 16 3 49 5.6234E-8
 L2 98 17 15.9M
 R13 17 16 1K
-F6 50 99 POLY(1) V6 300U 1
+F6 50 99 POLY(1) V6 0 1
 E1 99 23 99 15 1
 R16 24 23 17.5
 D5 26 24 DX_LM358
@@ -2200,6 +2324,7 @@ D3 15 20 DX_LM358
 L3 22 28 500P
 RL3 22 28 100K
 .MODEL DX_LM358 D(IS=1E-15)
+.MODEL DX2_LM358 D(IS=1E-15 N=0.25)
 .MODEL QX_LM358 PNP(BF=1.111E3)
 .ENDS LM358
 .op
@@ -2211,7 +2336,9 @@ exports[`netlist snapshot — circuits (41 examples) > optocoupler-signal 1`] = 
 R_rled n1 n2 270
 D_u1_led n2 u1_mid DLED_OPTO
 V_u1_sense u1_mid n4 DC 0
-F_u1_pt n3 n4 V_u1_sense 0.5
+F_u1_pt n3 u1_base V_u1_sense 0.0049504950495
+Q_u1_pt n3 u1_base n4 QOPTO_PT
+R_u1_be u1_base n4 100Meg
 R_u1_leak n3 n4 100Meg
 R_rpull n0 n3 10000
 R_autopull_n0 n0 0 100Meg
@@ -2219,7 +2346,8 @@ R_autopull_n1 n1 0 100Meg
 R_autopull_n2 n2 0 100Meg
 R_autopull_n3 n3 0 100Meg
 R_autopull_n4 n4 0 100Meg
-.model DLED_OPTO D(Is=1e-14 N=2 Rs=5)
+.model DLED_OPTO D(Is=1.3e-13 N=1.8 Rs=1.1)
+.model QOPTO_PT NPN(IS=1e-14 BF=100 RC=50)
 .op
 .end"
 `;
@@ -2252,7 +2380,10 @@ R_rb n0 n4 1000
 R_rl n2 n5 220
 V_led1_sense n5 led1_sense_mid DC 0
 D_led1 led1_sense_mid n1 LED_RED
-Q_q1 n2 n4 n3 Q2N3906
+V_q1_c n2 q1_ci DC 0
+V_q1_b n4 q1_bi DC 0
+Q_q1 q1_ci q1_bi n3 Q2N3906
+X_q1_bv n3 q1_ci BJT_CEO_BV_40
 R_autopull_n0 n0 0 100Meg
 R_autopull_n1 n1 0 100Meg
 R_autopull_n2 n2 0 100Meg
@@ -2261,6 +2392,12 @@ R_autopull_n4 n4 0 100Meg
 R_autopull_n5 n5 0 100Meg
 .model LED_RED D(Is=1e-20 N=1.7)
 .model Q2N3906 PNP(IS=1E-14 VAF=100 BF=200 IKF=0.4 XTB=1.5 BR=4 CJC=4.5E-12 CJE=10E-12 RB=20 RC=0.1 RE=0.1 TR=250E-9 TF=350E-12 ITF=1 VTF=2 XTF=3)
+.subckt BJT_CEO_BV_40 hi lo
+D_bv mid hi DBV
+D_bk mid lo DBK
+.model DBV D(Is=1e-14 BV=40 IBV=1m)
+.model DBK D(Is=1e-14)
+.ends BJT_CEO_BV_40
 .op
 .end"
 `;
@@ -2301,10 +2438,14 @@ R_autopull_n2 n2 0 100Meg
 exports[`netlist snapshot — circuits (41 examples) > relay-led-switch 1`] = `
 "* Velxio circuit
 R_rb n1 n3 1000
-Q_q1 n5 n3 n2 Q2N2222
+V_q1_c n5 q1_ci DC 0
+V_q1_b n3 q1_bi DC 0
+Q_q1 q1_ci q1_bi n2 Q2N2222
+X_q1_bv q1_ci n2 BJT_CEO_BV_40
 R_rly_coil n0 rly_coilmid 70
 L_rly_coil rly_coilmid n5 20m
-S_rly_no n6 n0 n0 n5 RELAY_SW
+B_rly_coilv rly_coilv 0 V = V(n0) - V(rly_coilmid)
+S_rly_no n6 n0 rly_coilv 0 RELAY_NO_5
 D_rly_fly n5 n0 D1N4148
 R_rl n6 n4 220
 V_led1_sense n4 led1_sense_mid DC 0
@@ -2316,8 +2457,14 @@ R_autopull_n3 n3 0 100Meg
 R_autopull_n4 n4 0 100Meg
 R_autopull_n5 n5 0 100Meg
 R_autopull_n6 n6 0 100Meg
-.model Q2N2222 NPN(IS=1E-14 VAF=100 BF=200 IKF=0.3 XTB=1.5 BR=3 CJC=8E-12 CJE=25E-12 TR=100E-9 TF=400E-12 ITF=1 VTF=2 XTF=3 RB=10 RC=.3 RE=.2)
-.model RELAY_SW SW(Vt=3 Vh=0.75 Ron=0.05 Roff=1G)
+.model Q2N2222 NPN(IS=1E-14 VAF=100 BF=200 IKF=0.3 ISE=2.5E-13 NE=1.588 XTB=1.5 BR=3 CJC=8E-12 CJE=25E-12 TR=100E-9 TF=400E-12 ITF=1 VTF=2 XTF=3 RB=10 RC=.3 RE=.2)
+.subckt BJT_CEO_BV_40 hi lo
+D_bv mid hi DBV
+D_bk mid lo DBK
+.model DBV D(Is=1e-14 BV=40 IBV=1m)
+.model DBK D(Is=1e-14)
+.ends BJT_CEO_BV_40
+.model RELAY_NO_5 SW(Vt=3 Vh=0.75 Ron=0.05 Roff=1G)
 .model D1N4148 D(Is=2.52n Rs=.568 N=1.752 Cjo=4p M=.4 tt=20n Bv=100 Ibv=0.1u)
 .model LED_RED D(Is=1e-20 N=1.7)
 .op
@@ -2376,7 +2523,6 @@ R_autopull_n0 n0 0 100Meg
 R_autopull_n1 n1 0 100Meg
 R_autopull_n2 n2 0 100Meg
 R_autopull_n3 n3 0 100Meg
-R_autopull_n5 n5 0 100Meg
 .model LED_YELLOW D(Is=1e-21 N=1.8)
 .op
 .end"
@@ -2391,7 +2537,7 @@ D_z1 n2 n1 D1N4733
 R_autopull_n0 n0 0 100Meg
 R_autopull_n1 n1 0 100Meg
 R_autopull_n2 n2 0 100Meg
-.model D1N4733 D(Is=1n N=1 Rs=5 Bv=5.1 Ibv=50m)
+.model D1N4733 D(Is=50f N=1 Rs=2 Bv=5.002 Ibv=49m)
 .op
 .end"
 `;
@@ -3747,17 +3893,9 @@ D_cnt_led2 cnt_led2_sense_mid 0 LED_BLUE
 R_cnt_lr3 n7 n11 220
 V_cnt_led3_sense n11 cnt_led3_sense_mid DC 0
 D_cnt_led3 cnt_led3_sense_mid 0 LED_YELLOW
-R_autopull_n1 n1 0 100Meg
 R_autopull_n2 n2 0 100Meg
-R_autopull_n3 n3 0 100Meg
 R_autopull_n4 n4 0 100Meg
-R_autopull_n5 n5 0 100Meg
 R_autopull_n6 n6 0 100Meg
-R_autopull_n7 n7 0 100Meg
-R_autopull_n8 n8 0 100Meg
-R_autopull_n9 n9 0 100Meg
-R_autopull_n10 n10 0 100Meg
-R_autopull_n11 n11 0 100Meg
 .model LED_RED D(Is=1e-20 N=1.7)
 .model LED_GREEN D(Is=1e-22 N=1.9)
 .model LED_BLUE D(Is=1e-28 N=2.0)

@@ -722,7 +722,8 @@ void loop() {
   {
     id: 'opamp-inverting',
     title: 'Inverting Amplifier (LM358)',
-    description: 'Vout = -(Rf/Rin) * Vin. Gain=-10 with Rin=1k, Rf=10k.',
+    description:
+      'Gain = -Rf/Rin = -10 (Rin = 1k, Rf = 10k) around the 2.5 V that two 10k resistors put on IN+: Vout = 2.5 - 10 * (Vin - 2.5). The LM358 on the Uno\'s 5 V puts out about 0 to 4 V, so only a Vin between about 2.35 and 2.75 V comes out unclipped.',
     category: 'circuits',
     difficulty: 'intermediate',
     code: `// Inverting amplifier — gain = -Rf/Rin = -10
@@ -772,7 +773,8 @@ void loop() {
   {
     id: 'opamp-voltage-follower',
     title: 'Voltage Follower (Buffer)',
-    description: 'Op-amp with 100% feedback. Vout = Vin. High Z input, low Z output.',
+    description:
+      'Op-amp with 100% feedback: Vout = Vin, within the LM358\'s 2 mV offset, up to about 4 V. On the Uno\'s 5 V its output stops about 1 V below the supply, so over the last fifth of the pot\'s travel A1 stays at about 4.0 V while A0 goes on to 5 V. High Z input, low Z output.',
     category: 'circuits',
     difficulty: 'beginner',
     code: `// Voltage follower — Vout tracks Vin exactly
@@ -1400,10 +1402,11 @@ void loop() {
   {
     id: 'l293d-motor-control',
     title: 'DC Motor Control (L293D)',
-    description: 'L293D H-bridge drives a DC motor forward, reverse, and brake.',
+    description:
+      'L293D H-bridge drives a DC motor forward, brakes it, reverses it and lets it coast. Brake: both inputs at one level with EN HIGH, so the driver shorts the motor. Coast: EN LOW, so the outputs float. The 56 Ω resistor stands for a small 5 V motor turning freely (about 90 mA); the L293D drops about 2 V of the 5 V on the way. A real motor gets its own supply on VCC2, with the grounds joined.',
     category: 'circuits',
     difficulty: 'intermediate',
-    code: `// L293D motor control — forward, reverse, brake
+    code: `// L293D motor control — forward, brake, reverse, coast
 #define EN 9
 #define IN1 7
 #define IN2 8
@@ -1422,10 +1425,16 @@ void reverse() {
   digitalWrite(IN2, HIGH);
   analogWrite(EN, 200);
 }
+// Both inputs at the same level with the channel enabled: the driver ties
+// the motor's two leads together, and its back-EMF stops it fast.
 void brake() {
   digitalWrite(IN1, LOW);
   digitalWrite(IN2, LOW);
-  analogWrite(EN, 0);
+  digitalWrite(EN, HIGH);
+}
+// Channel disabled: both outputs float and the motor spins down on its own.
+void coast() {
+  digitalWrite(EN, LOW);
 }
 void loop() {
   forward();
@@ -1434,21 +1443,23 @@ void loop() {
   delay(500);
   reverse();
   delay(2000);
-  brake();
-  delay(500);
+  coast();
+  delay(1000);
 }`,
     components: [
       UNO,
       { type: 'velxio-motor-driver-l293d', id: 'u1', x: 420, y: 140, properties: {} },
-      // Simple resistive motor model (5Ω winding)
-      { type: 'wokwi-resistor', id: 'rm', x: 560, y: 200, properties: { value: '5' } },
+      // The motor: a small 5 V motor turning freely draws about 90 mA, which
+      // 56 ohm stands for (no back-EMF or inertia in a resistor).
+      { type: 'wokwi-resistor', id: 'rm', x: 560, y: 200, properties: { value: '56' } },
     ],
     wires: [
       // Control signals from Arduino
       w('w1', ['arduino-uno', '9'], ['u1', 'EN1']),
       w('w2', ['arduino-uno', '7'], ['u1', 'IN1']),
       w('w3', ['arduino-uno', '8'], ['u1', 'IN2']),
-      // Logic supply VCC1 = 5V, motor supply VCC2 = 5V (toy example)
+      // Logic supply VCC1 = 5V; the motor supply VCC2 = 5V too, to keep it
+      // small: a real motor gets its own supply on VCC2.
       w('w4', ['arduino-uno', '5V'], ['u1', 'VCC1'], '#ff0000'),
       w('w5', ['arduino-uno', '5V'], ['u1', 'VCC2'], '#ff0000'),
       // Shared GND pins
@@ -1463,7 +1474,8 @@ void loop() {
   {
     id: 'l293d-speed-pwm',
     title: 'Motor Speed Control (PWM)',
-    description: 'Potentiometer controls motor speed via PWM on L293D enable pin.',
+    description:
+      'Potentiometer controls motor speed via PWM on the L293D enable pin: the motor gets the supply for the duty cycle and nothing for the rest, so its average current follows the duty. The 56 Ω resistor stands for a small 5 V motor turning freely (about 90 mA).',
     category: 'circuits',
     difficulty: 'intermediate',
     code: `// Motor speed via potentiometer + L293D
@@ -1471,6 +1483,7 @@ void loop() {
 #define IN1 7
 #define IN2 8
 void setup() {
+  Serial.begin(9600);
   pinMode(EN, OUTPUT);
   pinMode(IN1, OUTPUT);
   pinMode(IN2, OUTPUT);
@@ -1489,7 +1502,8 @@ void loop() {
       UNO,
       { type: 'wokwi-potentiometer', id: 'pot', x: 260, y: 290, properties: {} },
       { type: 'velxio-motor-driver-l293d', id: 'u1', x: 420, y: 230, properties: {} },
-      { type: 'wokwi-resistor', id: 'rm', x: 560, y: 290, properties: { value: '5' } },
+      // The motor: 56 ohm stands for a small 5 V motor turning freely.
+      { type: 'wokwi-resistor', id: 'rm', x: 560, y: 290, properties: { value: '56' } },
     ],
     wires: [
       // Pot → A0

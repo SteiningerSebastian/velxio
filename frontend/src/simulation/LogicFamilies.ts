@@ -29,6 +29,9 @@
  *   - TTL: 7400 series classic TTL
  */
 
+import { boardPinGroupFor } from './spice/boardPinGroups';
+import { isPiBoardKind } from '../types/board';
+
 /**
  * 74HC14 Schmitt-trigger thresholds as fractions of VCC. TI SN74HC14
  * (SCLS085L, 5.5) gives typical VT+ / VT- of 1.2 / 0.6 V at 2 V, 2.5 / 1.6 V
@@ -76,6 +79,15 @@ export interface LogicFamily {
    * emission to model real slew rates and current limits.
    */
   output_impedance_ohm?: number;
+  /**
+   * Where the family's own inputs typically switch: a rising node reads HIGH
+   * from `rise`, a falling one LOW from `fall`, and in between the input
+   * keeps its level (a Schmitt trigger). The datasheet's typical curves, not
+   * the guaranteed vil / vih, which leave a wider band where any reading is
+   * allowed. A board reads its digital inputs from the solve here
+   * (connectDigitalInputsToMcu, boardInputSwitch).
+   */
+  input_switch?: { rise: number; fall: number };
 }
 
 export const FAMILIES = {
@@ -149,8 +161,11 @@ export const FAMILIES = {
   /**
    * LVCMOS33 — 3.3V CMOS logic with TTL-compatible input thresholds.
    * ESP32 GPIO, RP2040 GPIO, most modern ARM Cortex-M MCUs use this.
-   * VIH = 2.0V means a 5V CMOS output (VOH ≥ 4.9V) easily drives it,
-   * but a 3.3V output back into a 5V CMOS-input gate is marginal.
+   * A 5 V output's HIGH clears VIH = 2.0 V, but that does not make it a safe
+   * connection: an ESP32 input takes at most VDD + 0.3 V (ESP32 datasheet,
+   * Table 5-3: VIH max), so a 5 V output needs a level shifter or a divider
+   * in front of it. A 3.3V output into a 5V CMOS-input gate (VIH 3.5 V) is
+   * marginal the other way.
    */
   LVCMOS33: {
     name: 'LVCMOS33',
@@ -165,13 +180,17 @@ export const FAMILIES = {
 
   /**
    * AVR/ATmega 5V HC-family.  Arduino Uno, Mega, Nano (5V variant).
-   * Documented in ATmega328P datasheet section 28.2.
+   * ATmega328P datasheet DS40002061B: Table 30-1 guarantees LOW up to
+   * 0.3 VCC and HIGH from 0.6 VCC; Figures 31-356 to 31-358 show a typical
+   * part switching near 2.6 V rising and 2.1 V falling at 5 V (its pins are
+   * Schmitt-triggered, about 0.5 V of hysteresis).
    */
   AVR_HC: {
     name: 'AVR (ATmega) 5V',
     vcc: 5,
-    vil: 1.0,
+    vil: 1.5,
     vih: 3.0,
+    input_switch: { rise: 2.6, fall: 2.1 },
     cin_pF: 8,
     vol_max: 0.5,
     voh_min: 4.2,
@@ -224,14 +243,38 @@ const BOARD_FAMILY: Record<string, LogicFamilyId> = {
 };
 
 /**
- * Lookup the I/O logic family for a board.  Falls back to AVR_HC (5V
- * Arduino) when the board is unknown — that's the most common
- * fallback and produces conservative thresholds.
+ * Lookup the I/O logic family for a board. A board the table does not name
+ * takes the family of its supply: a 3.3 V board (its pin group's vcc, an
+ * overlay board's declared power) is LVCMOS33, anything else AVR_HC (5V
+ * Arduino), the conservative default. Without that a 3.3 V board missing
+ * from the table (the LOLIN32 Lite, velxio/velxio-prod#175) got the 5 V
+ * AVR thresholds. A Raspberry Pi takes 5 V in but its GPIO header is 3.3 V
+ * logic, as the table already says for the Pi 3.
  */
 export function getBoardLogicFamily(boardKind: string): LogicFamily {
-  const id = BOARD_FAMILY[boardKind] ?? 'AVR_HC';
+  const id =
+    BOARD_FAMILY[boardKind] ??
+    (isPiBoardKind(boardKind) || boardPinGroupFor(boardKind).vcc <= 3.3 ? 'LVCMOS33' : 'AVR_HC');
   return FAMILIES[id];
 }
+
+/**
+ * Where a board's digital inputs switch (LogicFamily.input_switch), for a
+ * board whose family gives it. Every other board keeps 2.0 V rising and
+ * 0.8 V falling: the RP2040's input limits at 3.3 V (RP2040 datasheet,
+ * Table 625), inside the ESP32's own undefined band. Those were every
+ * board's, and on a 5 V ATmega they held 0.8-1.5 V, a guaranteed LOW, at the
+ * previous level and switched 2.0-2.6 V, where a real part stays LOW
+ * (velxio/velxio-prod#150). An unknown board does not fall back to AVR_HC
+ * here, unlike getBoardLogicFamily.
+ */
+export function boardInputSwitch(boardKind: string): { rise: number; fall: number } {
+  const id = BOARD_FAMILY[boardKind];
+  const family: LogicFamily | undefined = id ? FAMILIES[id] : undefined;
+  return family?.input_switch ?? DEFAULT_INPUT_SWITCH;
+}
+
+const DEFAULT_INPUT_SWITCH = { rise: 2.0, fall: 0.8 } as const;
 
 /**
  * Lookup by id with defensive fallback.  Useful when a component

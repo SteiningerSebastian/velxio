@@ -84,6 +84,11 @@ export interface ProBoardDef {
   tag: string;
   /** True pixel size of the element (selection ring + pin overlays). */
   size: { w: number; h: number };
+  /** The board plugs into a breadboard: two parallel rows of header pins on
+   *  the 0.1 inch grid (utils/boardSeat.ts derives the rows, the pitch and
+   *  the seat scale from pinInfo). Only set it for a board whose real
+   *  counterpart is a breadboard board. */
+  breadboard?: boolean;
   /** Attributes the picker sets on the thumbnail element. A tag shared by
    *  several boards (one element, a `variant` attribute) otherwise previews
    *  its default look for every one of them. */
@@ -165,6 +170,8 @@ export interface ProBoardDef {
     gnd: string[];
     vcc_pins: string[];
     aux?: { volts: number; pins: string[] };
+    /** What a GPIO pad takes at most, its chip and its rule (BoardPinGroup.gpioMax). */
+    gpioMax?: { volts: number; chip: string; rule: string };
   };
   /** In-browser simulator factory (e.g. the RP2350/Hazard3 emulator). The pm
    *  argument is the store's PinManager instance. */

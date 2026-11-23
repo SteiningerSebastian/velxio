@@ -125,6 +125,38 @@ export interface I2CControllerOptions {
   routing?: () => I2cRouting | 'static';
 }
 
+/** A step of a transaction on the wire: a (repeated) START, a STOP, or a 9-bit byte packet. */
+export type I2cBusPhase = 'start' | 'stop' | 'byte';
+
+/**
+ * When the controller hears that a step is over. The manager answers every
+ * step from the fabric at once; `complete` hands that answer to the
+ * peripheral. By default it runs at once. An engine that clocks its bus
+ * defers it by the time the step occupies the wire (velxio/velxio-prod#159).
+ */
+export type I2cBusTiming = (phase: I2cBusPhase, complete: () => void) => void;
+
+const COMPLETE_AT_ONCE: I2cBusTiming = (_phase, complete) => complete();
+
+/**
+ * Who hears each step of a transaction with its outcome, to draw it: the
+ * oscilloscope's SDA and SCL (simulation/busScope.ts), velxio/velxio-prod#160.
+ * It is told after the fabric has answered, so it knows every ACK and every
+ * byte a target drove. A listener only: nothing it does reaches the targets,
+ * the pins or the peripheral.
+ */
+export interface I2cScopeTap {
+  /** A START, or a repeated START when the bus is already busy. */
+  start(): void;
+  /** The address packet and its ACK (false: nobody answered). */
+  address(address: number, read: boolean, ack: boolean): void;
+  /** A data byte the controller wrote, and the target's ACK. */
+  write(value: number, ack: boolean): void;
+  /** A data byte a target drove, and the controller's ACK (false: the last). */
+  read(value: number, ack: boolean): void;
+  stop(): void;
+}
+
 // ── I2C Bus Manager (implements TWIEventHandler for avr8js) ────────────────
 
 export class I2CBusManager implements TWIEventHandler, I2cControllerPort {
@@ -141,6 +173,10 @@ export class I2CBusManager implements TWIEventHandler, I2cControllerPort {
   private fabricActive = false;
   /** The fabric heard a START since the last STOP, so it is owed that STOP. */
   private fabricOpen = false;
+  /** When a step's completion reaches the peripheral (setBusTiming). */
+  private timing: I2cBusTiming = COMPLETE_AT_ONCE;
+  /** Hears every step with its outcome (setScopeTap). */
+  private scopeTap: I2cScopeTap | null = null;
 
   /**
    * Construct a bus bound to an `I2CMaster`.  For backward
@@ -216,10 +252,30 @@ export class I2CBusManager implements TWIEventHandler, I2cControllerPort {
     this.routingChangeHandler?.();
   }
 
+  /**
+   * When the peripheral hears that each step is over (I2cBusTiming); null
+   * restores "at once". The targets still answer the moment the step starts:
+   * only the completion waits.
+   */
+  setBusTiming(timing: I2cBusTiming | null): void {
+    this.timing = timing ?? COMPLETE_AT_ONCE;
+  }
+
+  /**
+   * Who draws the transactions on the oscilloscope (I2cScopeTap); null for
+   * nobody. It hears each step after the targets have answered it and
+   * before the peripheral completes it.
+   */
+  setScopeTap(tap: I2cScopeTap | null): void {
+    this.scopeTap = tap;
+  }
+
   // ── TWIEventHandler implementation (master-side events from the local MCU) ──
 
   start(_repeated: boolean): void {
-    this.master.completeStart();
+    const master = this.master;
+    this.scopeTap?.start();
+    this.timing('start', () => master.completeStart());
   }
 
   stop(): void {
@@ -229,7 +285,9 @@ export class I2CBusManager implements TWIEventHandler, I2cControllerPort {
     this.fabricOpen = false;
     this.fabricActive = false;
     owed?.stop();
-    this.master.completeStop();
+    const master = this.master;
+    this.scopeTap?.stop();
+    this.timing('stop', () => master.completeStop());
   }
 
   connectToSlave(addr: number, write: boolean): void {
@@ -241,18 +299,25 @@ export class I2CBusManager implements TWIEventHandler, I2cControllerPort {
       this.fabricOpen = true;
       this.fabricActive = h.start(addr, !write);
     }
-    this.master.completeConnect(this.fabricActive);
+    const ack = this.fabricActive;
+    const master = this.master;
+    this.scopeTap?.address(addr, !write, ack);
+    this.timing('byte', () => master.completeConnect(ack));
   }
 
   writeByte(value: number): void {
     const ack = this.fabricActive && this.handler ? this.handler.write(value) : false;
-    this.master.completeWrite(ack);
+    const master = this.master;
+    this.scopeTap?.write(value & 0xff, ack);
+    this.timing('byte', () => master.completeWrite(ack));
   }
 
-  readByte(_ack: boolean): void {
+  readByte(ack: boolean): void {
     // Open-drain: with nobody addressed the line reads the pull-up.
-    const value = this.fabricActive && this.handler ? this.handler.read() : 0xff;
-    this.master.completeRead(value & 0xff);
+    const value = (this.fabricActive && this.handler ? this.handler.read() : 0xff) & 0xff;
+    const master = this.master;
+    this.scopeTap?.read(value, ack);
+    this.timing('byte', () => master.completeRead(value));
   }
 }
 
