@@ -28,6 +28,7 @@ from app.services import build_queue
 from app.services import espidf_compiler as espidf_compiler_module
 from app.services.arduino_cli import ArduinoCLIService
 from app.services.espidf_compiler import espidf_compiler
+from app.services.library_autoinstall import ensure_manifest_libraries
 
 logger = logging.getLogger(__name__)
 
@@ -409,6 +410,19 @@ def _job_display_fields(job_id: str) -> dict[str, Any]:
     }
 
 
+def _default_build_nice() -> int | None:
+    """VELXIO_BUILD_NICE (0..19) for self-hosts without an overlay: compilers
+    run below the API so the web UI stays responsive while a CPU-capped
+    container builds. Unset -> inherit (the historic behaviour)."""
+    raw = os.environ.get("VELXIO_BUILD_NICE", "").strip()
+    if not raw:
+        return None
+    try:
+        return max(0, min(19, int(raw)))
+    except ValueError:
+        return None
+
+
 async def _resolve_queue_priority(
     user_id: str | None, http_request: Request | None = None
 ) -> tuple[int, str, int | None]:
@@ -424,7 +438,7 @@ async def _resolve_queue_priority(
     """
     info = await compile_priority(user_id, http_request)
     if not isinstance(info, dict):
-        return build_queue.PRIORITY_STANDARD, "local", None
+        return build_queue.PRIORITY_STANDARD, "local", _default_build_nice()
     try:
         priority = int(info.get("priority", build_queue.PRIORITY_STANDARD))
     except (TypeError, ValueError):
@@ -949,6 +963,12 @@ async def _run_compile(
             stderr="",
             error="ESP-IDF toolchain is not available on this server.",
         )
+
+    # Multi-replica self-host: the Library Manager may have installed this
+    # board's libraries on ANOTHER replica (per-node libraries dir). Install
+    # what this one lacks before building, so the compile never fails with a
+    # missing header for a library the UI shows as installed.
+    await ensure_manifest_libraries(request.libraries, arduino_cli, progress_callback)
 
     # One report per compile: never inherit the previous job's.
     scope_stats.set(None)

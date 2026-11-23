@@ -153,15 +153,16 @@ const POLL_INTERVAL_MS = 2000;
 const QUEUED_POLL_INTERVAL_MS = 3000;
 
 // Two budgets, and NEITHER of them charges queue time. A build that has STARTED
-// gets 15 minutes (covers a cold ESP-IDF build); the wider cap exists only so a
-// wedged server can't leave a tab polling forever.
+// gets 30 minutes (covers a cold ESP-IDF build on a CPU-capped host, where the
+// server-side ninja timeout VELXIO_NINJA_TIMEOUT_S may be raised past 15 min);
+// the wider cap exists only so a wedged server can't leave a tab polling forever.
 //
 // Time spent queued is subtracted from both. The product promise is that a
 // queued build always eventually runs — a client-side timeout would quietly
 // break it on exactly the busy days it matters, and the card would say "Build
 // failed" for a build the server is still perfectly willing to run, directly
 // contradicting its own "never cancelled" copy.
-const MAX_BUILD_DURATION_MS = 15 * 60 * 1000;
+const MAX_BUILD_DURATION_MS = 30 * 60 * 1000;
 const MAX_TOTAL_DURATION_MS = 60 * 60 * 1000;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));

@@ -66,6 +66,15 @@ _ALWAYS_CONFIGURE = (
 )
 
 
+def _env_seconds(name: str, default: int) -> int:
+    """A positive integer number of seconds from the environment, else default."""
+    try:
+        value = int(os.environ.get(name, '') or default)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
 def _write_if_changed(path: Path, text: str) -> bool:
     """Write `text` to `path` only when the bytes differ. Returns True if written.
 
@@ -7585,7 +7594,7 @@ class ESPIDFCompiler:
 
         # IDF 5.x configure does more work per cold run (component manager,
         # per-target tool checks) — give it more headroom than the 4.4 flow.
-        cmake_timeout = 300 if use_idf5 else 120
+        cmake_timeout = _env_seconds('VELXIO_CMAKE_TIMEOUT_S', 300 if use_idf5 else 120)
 
         def _run_cmake():
             return _run_with_streaming(
@@ -7728,7 +7737,8 @@ class ESPIDFCompiler:
         # 5-7 minutes on modest hardware. 300s used to cut them off at 98%;
         # bump to 600s so first-run cold compiles complete. Subsequent
         # builds reuse ninja's cache and finish in seconds.
-        NINJA_TIMEOUT_S = 600
+        # Override with VELXIO_NINJA_TIMEOUT_S on CPU-capped hosts (k8s limits).
+        NINJA_TIMEOUT_S = _env_seconds('VELXIO_NINJA_TIMEOUT_S', 600)
 
         def _run_ninja():
             return _run_with_streaming(

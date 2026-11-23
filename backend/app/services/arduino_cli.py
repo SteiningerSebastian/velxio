@@ -138,6 +138,32 @@ def humanize_cli_error(raw: str | None, *, action: str = "run arduino-cli") -> s
     return f"Could not {action}: {first[:300]}"
 
 
+def _rank_and_cap_search(libraries: list, query: str) -> list:
+    """Best name matches first (exact, prefix, contains, rest), capped at
+    VELXIO_LIB_SEARCH_LIMIT (default 100) so a one-letter query does not ship
+    the whole index to the browser."""
+    try:
+        limit = int(os.environ.get("VELXIO_LIB_SEARCH_LIMIT", "") or 100)
+    except ValueError:
+        limit = 100
+    q = "".join(ch for ch in (query or "").lower() if ch.isalnum())
+
+    def rank(lib: dict) -> int:
+        n = "".join(ch for ch in str(lib.get("name", "")).lower() if ch.isalnum())
+        if not q:
+            return 3
+        if n == q:
+            return 0
+        if n.startswith(q):
+            return 1
+        if q in n:
+            return 2
+        return 3
+
+    ordered = sorted(libraries, key=rank)  # stable: keeps arduino-cli order within a rank
+    return ordered[:limit] if limit > 0 else ordered
+
+
 def _discard_sketch_build_cache(sketch_dir: Path) -> None:
     """Remove the per-sketch build cache arduino-cli left for this compile.
 
@@ -970,7 +996,11 @@ class ArduinoCLIService:
                 return subprocess.run(
                     # "--" ends arduino-cli's options: a query that starts with "-" is
                     # searched for, never read as an option (velxio/velxio-prod#236).
-                    [self.cli_path, "lib", "search", "--format", "json", "--", query],
+                    # --omit-releases-details: full release records for every
+                    # version made "q=a" a 53 MB / 14 s response; the UI only
+                    # needs `latest` + the version list (available_versions).
+                    [self.cli_path, "lib", "search", "--omit-releases-details",
+                     "--format", "json", "--", query],
                     capture_output=True, text=True, encoding='utf-8', errors='replace'
                 )
 
@@ -1005,10 +1035,18 @@ class ArduinoCLIService:
 
                 for lib in libraries:
                     releases = lib.get("releases") or {}
-                    if releases:
+                    versions = lib.pop("available_versions", None) or []
+                    if not releases and versions:
+                        # Version picker reads only the keys; keep it that small.
+                        releases = {v: {"version": v} for v in versions}
+                        lib["releases"] = releases
+                    if lib.get("latest"):
+                        (lib["latest"] or {}).pop("resources", None)
+                    elif releases:
                         latest_key = max(releases.keys(), key=_parse_version)
                         lib["latest"] = {**releases[latest_key], "version": latest_key}
 
+                libraries = _rank_and_cap_search(libraries, query)
                 return {"success": True, "libraries": libraries}
             except json.JSONDecodeError:
                 # rc was 0 but stdout is not JSON: arduino-cli printed a
